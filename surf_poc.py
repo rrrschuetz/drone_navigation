@@ -53,15 +53,22 @@ if len(good_matches) >= MIN_MATCH_COUNT:
     pts = np.float32([[0, 0], [0, h - 1], [w - 1, h - 1], [w - 1, 0]]).reshape(-1, 1, 2)
     dst = cv2.perspectiveTransform(pts, M)
 
-    # Draw the detected region in the large image
-    large_image_with_box = cv2.polylines(large_image.copy(), [np.int32(dst)], True, 255, 3, cv2.LINE_AA)
+    # Convert the large image to color to enable color drawing
+    large_image_color = cv2.cvtColor(large_image, cv2.COLOR_GRAY2BGR)
+    # Draw a thick yellow line around the detected region in the large image
+    large_image_with_box = cv2.polylines(
+        large_image_color, [np.int32(dst)], isClosed=True, color=(0, 255, 255), thickness=10, lineType=cv2.LINE_AA
+    )
 
     # Display the result
     plt.figure(figsize=(10, 6))
-    plt.imshow(large_image_with_box, cmap='gray')
+    plt.imshow(cv2.cvtColor(large_image_with_box, cv2.COLOR_BGR2RGB))
     plt.title("Detected Location of Small Image in Large Satellite Image")
     plt.axis('off')
     plt.show()
+
+
+
 
     # Optionally, calculate the approximate location coordinates within the large image
     location_center = np.mean(dst, axis=0)
