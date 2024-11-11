@@ -1,5 +1,7 @@
 import numpy as np
 from scipy.spatial.transform import Rotation as R
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
 import time
 
 # Placeholder functions to simulate real sensor readings
@@ -94,27 +96,65 @@ def update(state, covariance, accel, mag):
 
     return state, covariance
 
-# Main loop to simulate the filter over time
-for _ in range(1000):
+# Set up Matplotlib figure and subplots for live visualization
+fig, (ax_orientation, ax_velocity, ax_position) = plt.subplots(3, 1, figsize=(8, 8))
+plt.tight_layout()
+
+# Initialize the plots
+pitch_line, = ax_orientation.plot([], [], 'r-', label='Pitch')
+roll_line, = ax_orientation.plot([], [], 'g-', label='Roll')
+yaw_line, = ax_orientation.plot([], [], 'b-', label='Yaw')
+ax_orientation.legend()
+ax_orientation.set_xlim(0, 100)
+ax_orientation.set_ylim(-180, 180)
+
+velocity_text = ax_velocity.text(0.1, 0.5, '', fontsize=12)
+position_text = ax_position.text(0.1, 0.5, '', fontsize=12)
+
+# Data history for plotting
+pitch_data, roll_data, yaw_data = [], [], []
+time_data = []
+
+# Update function for animation
+def update_plot(frame):
+    global state, covariance
+
+    # Simulate sensor readings
     gyro = get_gyroscope_data()
     accel = get_accelerometer_data()
     mag = get_magnetometer_data()
 
-    # Prediction step
+    # Prediction and Update steps
     state, covariance = predict(state, covariance, gyro, accel, dt)
-    
-    # Update step
     state, covariance = update(state, covariance, accel, mag)
-    
-    # Extract orientation from state
+
+    # Extract orientation (Pitch, Roll, Yaw)
     q = state[:4]
     orientation = R.from_quat(q)
     euler = orientation.as_euler('xyz', degrees=True)  # Pitch, Roll, Yaw
 
-    # Display orientation, velocity, and position
-    print(f"Pitch: {euler[0]:.2f}, Roll: {euler[1]:.2f}, Yaw: {euler[2]:.2f}")
-    print(f"Velocity (m/s): {state[4:7]}")
-    print(f"Position (m): {state[7:]}")
-    
-    # Simulate sensor reading frequency
-    time.sleep(dt)
+    # Update data history
+    pitch_data.append(euler[0])
+    roll_data.append(euler[1])
+    yaw_data.append(euler[2])
+    time_data.append(len(time_data))
+
+    # Update orientation plot
+    pitch_line.set_data(time_data, pitch_data)
+    roll_line.set_data(time_data, roll_data)
+    yaw_line.set_data(time_data, yaw_data)
+
+    # Display orientation limits in graph
+    ax_orientation.set_xlim(max(0, len(time_data) - 100), len(time_data))
+    ax_orientation.set_ylim(-180, 180)
+    ax_orientation.set_title("Orientation (Pitch, Roll, Yaw)")
+
+    # Update velocity and position display
+    velocity_text.set_text(f"Velocity (m/s): {state[4:7]}")
+    position_text.set_text(f"Position (m): {state[7:]}")
+
+    return pitch_line, roll_line, yaw_line, velocity_text, position_text
+
+# Start animation
+ani = FuncAnimation(fig, update_plot, frames=1000, interval=dt * 1000, blit=True)
+plt.show()
