@@ -2,9 +2,6 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 
-# Ensure you have opencv-contrib-python installed:
-# pip install opencv-contrib-python
-
 # Load the large (satellite) and small images
 large_image_path = 'satellite_image.jpg'  # Replace with path to the large satellite image
 small_image_path = 'small_image.jpg'      # Replace with path to the smaller image
@@ -16,12 +13,28 @@ small_image = cv2.imread(small_image_path, cv2.IMREAD_GRAYSCALE)
 if large_image is None or small_image is None:
     raise FileNotFoundError("One or both image paths are incorrect.")
 
-# Initialize the SURF detector with a Hessian threshold (e.g., 400)
-surf = cv2.xfeatures2d.SURF_create(400)
+# Initialize the CUDA-enabled SURF detector with a Hessian threshold (e.g., 400)
+try:
+    surf = cv2.cuda.SURF_CUDA_create(400)
+except AttributeError:
+    print("CUDA SURF not available. Switching to ORB.")
+    surf = cv2.cuda.ORB_create(400)
 
-# Detect keypoints and descriptors in both images
-keypoints_large, descriptors_large = surf.detectAndCompute(large_image, None)
-keypoints_small, descriptors_small = surf.detectAndCompute(small_image, None)
+# Upload images to GPU memory
+gpu_large_image = cv2.cuda_GpuMat()
+gpu_small_image = cv2.cuda_GpuMat()
+gpu_large_image.upload(large_image)
+gpu_small_image.upload(small_image)
+
+# Detect keypoints and compute descriptors in both images
+keypoints_large, descriptors_large = surf.detectWithDescriptors(gpu_large_image, None)
+keypoints_small, descriptors_small = surf.detectWithDescriptors(gpu_small_image, None)
+
+# Convert GPU keypoints and descriptors to CPU for matching
+keypoints_large = surf.downloadKeypoints(keypoints_large)
+keypoints_small = surf.downloadKeypoints(keypoints_small)
+descriptors_large = descriptors_large.download()
+descriptors_small = descriptors_small.download()
 
 # Use the FLANN-based matcher to match descriptors between the two images
 # FLANN parameters
@@ -45,7 +58,7 @@ if len(good_matches) >= MIN_MATCH_COUNT:
     src_pts = np.float32([keypoints_small[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
     dst_pts = np.float32([keypoints_large[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
 
-    # Find the homography matrix
+    # Find the homography matrix (no CUDA support, so this remains on CPU)
     M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
 
     # Use the homography matrix to find the position in the large image
