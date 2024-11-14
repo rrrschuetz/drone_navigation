@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 
 # Load the large (satellite) and small images
 large_image_path = 'satellite_image.jpg'  # Replace with path to the large satellite image
-small_image_path = 'small_image.jpg'      # Replace with path to the smaller image
+small_image_path = 'small_imag3.jpg'      # Replace with path to the smaller image
 
 large_image = cv2.imread(large_image_path, cv2.IMREAD_GRAYSCALE)
 small_image = cv2.imread(small_image_path, cv2.IMREAD_GRAYSCALE)
@@ -73,12 +73,35 @@ if len(good_matches) >= MIN_MATCH_COUNT:
         large_image_color, [np.int32(dst)], isClosed=True, color=(0, 255, 255), thickness=10, lineType=cv2.LINE_AA
     )
 
-    # Display the result
-    plt.figure(figsize=(10, 6))
-    plt.imshow(cv2.cvtColor(large_image_with_box, cv2.COLOR_BGR2RGB))
-    plt.title("Detected Location of Small Image in Large Satellite Image")
-    plt.axis('off')
-    plt.show()
+    # Mouse callback to create a magnifier
+    def magnifier(event, x, y, flags, param):
+        if event == cv2.EVENT_MOUSEMOVE:
+            # Define the size of the magnifier window
+            mag_size = 200  # Size of the region to magnify
+            zoom_factor = 3  # Magnification factor
+
+            # Calculate coordinates of the zoomed-in area
+            x1 = max(0, x - mag_size // 2)
+            y1 = max(0, y - mag_size // 2)
+            x2 = min(large_image_with_box.shape[1], x + mag_size // 2)
+            y2 = min(large_image_with_box.shape[0], y + mag_size // 2)
+
+            # Crop and zoom
+            magnifier_region = large_image_with_box[y1:y2, x1:x2]
+            magnified_view = cv2.resize(magnifier_region, None, fx=zoom_factor, fy=zoom_factor, interpolation=cv2.INTER_LINEAR)
+
+            # Display the magnified region in a separate window
+            cv2.imshow("Magnifier", magnified_view)
+
+    # Display the main image with the magnifier
+    cv2.namedWindow("Detected Location", cv2.WINDOW_NORMAL)  # Allows resizing
+    cv2.setMouseCallback("Detected Location", magnifier)  # Set the mouse callback for the magnifier
+    cv2.imshow("Detected Location", large_image_with_box)
+    cv2.resizeWindow("Detected Location", 1200, 800)  # Adjust the size as needed
+
+    # Keep the windows open until a key is pressed
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
     # Optionally, calculate the approximate location coordinates within the large image
     location_center = np.mean(dst, axis=0)
