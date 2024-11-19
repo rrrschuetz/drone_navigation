@@ -2,6 +2,16 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 
+def center_crop(image, crop_width, crop_height):
+    """
+    Crop the central region of the image to the specified width and height.
+    """
+    h, w = image.shape
+    start_x = (w - crop_width) // 2
+    start_y = (h - crop_height) // 2
+    return image[start_y:start_y + crop_height, start_x:start_x + crop_width]
+
+
 # Load the large (satellite) and small images
 large_image_path = 'satellite_image.jpg'  # Replace with path to the large satellite image
 small_image_path = 'small_image.jpg'      # Replace with path to the smaller image
@@ -20,9 +30,19 @@ except AttributeError:
     print("CUDA SURF not available. Switching to ORB.")
     surf = cv2.cuda.ORB_create(400)
 
+    # Define the dimensions for the crop
+    crop_width, crop_height = 2048, 1024  # Adjust these as needed
+
+    # Perform cropping
+    large_image_cropped = center_crop(large_image, crop_width, crop_height)
+
+    # No resizing for the small image
+    small_image_cropped = small_image  # Use as is or preprocess separately if needed
+
 # Upload images to GPU memory
 gpu_large_image = cv2.cuda_GpuMat()
 gpu_small_image = cv2.cuda_GpuMat()
+
 gpu_large_image.upload(large_image)
 gpu_small_image.upload(small_image)
 

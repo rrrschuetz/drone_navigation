@@ -10,9 +10,9 @@ from models.utils import frame2tensor
 
 # Set matplotlib backend
 try:
-    matplotlib.use('TkAgg')  # Try interactive backend
+    matplotlib.use('TkAgg')  # Interactive backend
 except ImportError:
-    matplotlib.use('Agg')  # Fallback for headless environments
+    matplotlib.use('Agg')  # Headless fallback
 
 # Check for CUDA availability
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -21,19 +21,19 @@ print(f"Using device: {device}")
 # Load SuperGlue configuration
 superglue_config = {
     'superpoint': {
-        'nms_radius': 4,
-        'keypoint_threshold': 0.005,
-        'max_keypoints': 1024,
+        'nms_radius': 3,                # Adjusted for finer detection
+        'keypoint_threshold': 0.005,    # Lower threshold for more keypoints
+        'max_keypoints': 2048,          # Allow more keypoints
     },
     'superglue': {
-        'weights': 'outdoor',  # Use 'indoor' for indoor scenes
+        'weights': 'outdoor',           # Experiment with 'indoor' as needed
     },
 }
 matching = Matching(superglue_config).eval().to(device)
 
 # Load images
 large_image_path = 'satellite_image.jpg'  # Replace with the path to the large satellite image
-small_image_path = 'small_imag3.jpg'      # Replace with the path to the smaller image
+small_image_path = 'small_image.jpg'      # Replace with the path to the smaller image
 
 large_image = cv2.imread(large_image_path, cv2.IMREAD_GRAYSCALE)
 small_image = cv2.imread(small_image_path, cv2.IMREAD_GRAYSCALE)
@@ -41,9 +41,22 @@ small_image = cv2.imread(small_image_path, cv2.IMREAD_GRAYSCALE)
 if large_image is None or small_image is None:
     raise FileNotFoundError("One or both image paths are incorrect or the images could not be loaded.")
 
-# Resize images
-large_image_resized = cv2.resize(large_image, (1024, 1024), interpolation=cv2.INTER_AREA)
-small_image_resized = cv2.resize(small_image, (512, 512), interpolation=cv2.INTER_AREA)
+# Resize images proportionally
+def resize_image(image, max_dim):
+    h, w = image.shape
+    scale = max_dim / max(h, w)
+    new_h, new_w = int(h * scale), int(w * scale)
+    return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+large_image_resized = resize_image(large_image, 1024)
+small_image_resized = resize_image(small_image, 512)
+
+# Resize images to manageable dimensions
+resize_large = (2048, 2048)  # Resize large image to a square resolution
+resize_small = (1024, 1024)    # Resize small image to a smaller resolution
+
+large_image_resized = cv2.resize(large_image, resize_large, interpolation=cv2.INTER_AREA)
+small_image_resized = cv2.resize(small_image, resize_small, interpolation=cv2.INTER_AREA)
 
 # Convert images to tensors
 large_tensor = frame2tensor(large_image_resized, device)
@@ -57,13 +70,24 @@ with torch.no_grad():
 keypoints0 = pred['keypoints0'][0].cpu().numpy()
 keypoints1 = pred['keypoints1'][0].cpu().numpy()
 matches = pred['matches0'][0].cpu().numpy()
+matches_conf = pred['matching_scores0'][0].cpu().numpy()
+
+# Print the number of keypoints and matches
+print(f"Keypoints in small image: {len(keypoints0)}")
+print(f"Keypoints in large image: {len(keypoints1)}")
+print(f"Matches: {np.sum(matches > -1)}")
 
 # Filter matches based on confidence
-valid_matches = matches > -1
+confidence_threshold = 0.01
+valid_matches = (matches > -1) & (matches_conf > confidence_threshold)
 keypoints0_valid = keypoints0[valid_matches]
 keypoints1_valid = keypoints1[matches[valid_matches]]
 
-# Custom visualization function
+if len(keypoints0_valid) == 0 or len(keypoints1_valid) == 0:
+    print("No valid matches found. Try tuning the parameters.")
+    exit()
+
+# Visualization function for matches
 def draw_custom_matches(img1, kpts1, img2, kpts2):
     h1, w1 = img1.shape
     h2, w2 = img2.shape
@@ -89,7 +113,7 @@ plt.figure(figsize=(15, 15))
 plt.imshow(output_image)
 plt.axis("off")
 plt.title("Custom Matches")
-plt.savefig("custom_matches.png")  # Save the output
+plt.savefig("custom_matches.png")
 plt.show()
 
 # Estimate homography
@@ -112,7 +136,7 @@ plt.figure(figsize=(10, 10))
 plt.imshow(cv2.cvtColor(detected_image, cv2.COLOR_BGR2RGB))
 plt.axis("off")
 plt.title("Detected Region with SuperGlue")
-plt.savefig("detected_region.png")  # Save the output
+plt.savefig("detected_region.png")
 plt.show()
 
 # Print the center of the detected region
