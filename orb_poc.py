@@ -86,7 +86,7 @@ if len(good_matches) >= MIN_MATCH_COUNT:
     dst = cv2.perspectiveTransform(pts, M)
 
     # Draw detected region
-    large_image_color = cv2.cvtColor(large_image_enhanced, cv2.COLOR_GRAY2BGR)
+    large_image_color = cv2.cvtColor(large_image_resized, cv2.COLOR_GRAY2BGR)
     large_image_with_box = cv2.polylines(
         large_image_color, [np.int32(dst)], isClosed=True, color=(0, 255, 255), thickness=10, lineType=cv2.LINE_AA
     )
