@@ -3,37 +3,30 @@ sys.path.append('/home/rrrschuetz/SuperGluePretrainedNetwork')
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib
 import torch
 from models.matching import Matching
 from models.utils import frame2tensor
-
-# Set matplotlib backend
-try:
-    matplotlib.use('TkAgg')  # Interactive backend
-except ImportError:
-    matplotlib.use('Agg')  # Headless fallback
 
 # Check for CUDA availability
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Using device: {device}")
 
-# Load SuperGlue configuration
+# Load SuperGlue configuration with updated parameters
 superglue_config = {
     'superpoint': {
-        'nms_radius': 3,                # Adjusted for finer detection
-        'keypoint_threshold': 0.005,    # Lower threshold for more keypoints
-        'max_keypoints': 2048,          # Allow more keypoints
+        'nms_radius': 3,
+        'keypoint_threshold': 0.01,  # Increased for better filtering
+        'max_keypoints': 2048,
     },
     'superglue': {
-        'weights': 'outdoor',           # Experiment with 'indoor' as needed
+        'weights': 'outdoor',
     },
 }
 matching = Matching(superglue_config).eval().to(device)
 
 # Load images
-large_image_path = 'satellite_image.jpg'  # Replace with the path to the large satellite image
-small_image_path = 'small_image.jpg'      # Replace with the path to the smaller image
+large_image_path = 'bruchsal_highres.jpg'
+small_image_path = 'luftbild5.jpg'
 
 large_image = cv2.imread(large_image_path, cv2.IMREAD_GRAYSCALE)
 small_image = cv2.imread(small_image_path, cv2.IMREAD_GRAYSCALE)
@@ -41,22 +34,15 @@ small_image = cv2.imread(small_image_path, cv2.IMREAD_GRAYSCALE)
 if large_image is None or small_image is None:
     raise FileNotFoundError("One or both image paths are incorrect or the images could not be loaded.")
 
-# Resize images proportionally
-def resize_image(image, max_dim):
+# Resize images while preserving aspect ratio
+def resize_with_aspect_ratio(image, max_dim):
     h, w = image.shape
     scale = max_dim / max(h, w)
     new_h, new_w = int(h * scale), int(w * scale)
     return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-large_image_resized = resize_image(large_image, 1024)
-small_image_resized = resize_image(small_image, 512)
-
-# Resize images to manageable dimensions
-resize_large = (2048, 2048)  # Resize large image to a square resolution
-resize_small = (1024, 1024)    # Resize small image to a smaller resolution
-
-large_image_resized = cv2.resize(large_image, resize_large, interpolation=cv2.INTER_AREA)
-small_image_resized = cv2.resize(small_image, resize_small, interpolation=cv2.INTER_AREA)
+large_image_resized = resize_with_aspect_ratio(large_image, 4096)
+small_image_resized = resize_with_aspect_ratio(small_image, 1024)
 
 # Convert images to tensors
 large_tensor = frame2tensor(large_image_resized, device)
@@ -77,8 +63,8 @@ print(f"Keypoints in small image: {len(keypoints0)}")
 print(f"Keypoints in large image: {len(keypoints1)}")
 print(f"Matches: {np.sum(matches > -1)}")
 
-# Filter matches based on confidence
-confidence_threshold = 0.01
+# Filter matches based on Lowe's ratio test
+confidence_threshold = 0.1  # Increased threshold for stronger matches
 valid_matches = (matches > -1) & (matches_conf > confidence_threshold)
 keypoints0_valid = keypoints0[valid_matches]
 keypoints1_valid = keypoints1[matches[valid_matches]]
@@ -119,7 +105,7 @@ plt.show()
 # Estimate homography
 src_pts = np.float32(keypoints0_valid).reshape(-1, 1, 2)
 dst_pts = np.float32(keypoints1_valid).reshape(-1, 1, 2)
-M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 10.0)  # Increased threshold for robustness
 
 # Draw the detected region
 h, w = small_image_resized.shape

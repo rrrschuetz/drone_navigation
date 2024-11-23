@@ -3,8 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Load the large (satellite) and small images
-large_image_path = 'satellite_image.jpg'  # Replace with path to the large satellite image
-small_image_path = 'small_image.jpg'      # Replace with path to the smaller image
+large_image_path = 'bruchsal_highres.jpg'  # Replace with path to the large satellite image
+small_image_path = 'luftbild2.jpg'      # Replace with path to the smaller image
 
 large_image = cv2.imread(large_image_path, cv2.IMREAD_GRAYSCALE)
 small_image = cv2.imread(small_image_path, cv2.IMREAD_GRAYSCALE)
@@ -44,8 +44,8 @@ def visualize_keypoints(image, keypoints, title):
     plt.axis("off")
     plt.show()
 
-visualize_keypoints(large_image_resized, keypoints_large, "Keypoints in Large Image")
-visualize_keypoints(small_image, keypoints_small, "Keypoints in Small Image")
+#visualize_keypoints(large_image_resized, keypoints_large, "Keypoints in Large Image")
+#visualize_keypoints(small_image, keypoints_small, "Keypoints in Small Image")
 
 # Use appropriate norm based on detector type
 if "ORB" in type(detector).__name__:
@@ -62,7 +62,7 @@ matches = bf.knnMatch(descriptors_small, descriptors_large, k=2)
 # Apply a looser Lowe's ratio test
 good_matches = []
 for m, n in matches:
-    if m.distance < 0.85 * n.distance:
+    if (m.distance < 0.85 * n.distance):
         good_matches.append(m)
 
 # Visualize matches
