@@ -17,6 +17,11 @@ large_image_enhanced = cv2.equalizeHist(large_image)
 kernel = np.array([[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]])
 large_image_enhanced = cv2.filter2D(large_image_enhanced, -1, kernel)
 
+# Enhance and preprocess the small image
+small_image_enhanced = cv2.equalizeHist(small_image)
+kernel = np.array([[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]])
+small_image_enhanced = cv2.filter2D(small_image_enhanced, -1, kernel)
+
 # Resize images while preserving aspect ratio
 def resize_with_aspect_ratio(image, max_dim):
     h, w = image.shape
@@ -24,8 +29,10 @@ def resize_with_aspect_ratio(image, max_dim):
     new_h, new_w = int(h * scale), int(w * scale)
     return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-large_image_resized = resize_with_aspect_ratio(large_image, 4096)
-small_image_resized = resize_with_aspect_ratio(small_image, 2048)
+large_image_resized = resize_with_aspect_ratio(large_image_enhanced, 4096)
+small_image_resized = resize_with_aspect_ratio(small_image_enhanced, 512)
+#large_image_resized = large_image_enhanced
+#small_image_resized = small_image_enhanced
 
 # Initialize the AKAZE detector
 detector = cv2.AKAZE_create()
@@ -51,7 +58,7 @@ def visualize_keypoints(image, keypoints, title):
     plt.show()
 
 visualize_keypoints(large_image_resized, keypoints_large, "Keypoints in Large Image")
-visualize_keypoints(small_image, keypoints_small, "Keypoints in Small Image")
+visualize_keypoints(small_image_resized, keypoints_small, "Keypoints in Small Image")
 
 # Use appropriate norm based on detector type
 if "ORB" in type(detector).__name__:
@@ -68,7 +75,7 @@ matches = bf.knnMatch(descriptors_small, descriptors_large, k=2)
 # Apply a looser Lowe's ratio test
 good_matches = []
 for m, n in matches:
-    if (m.distance < 0.85 * n.distance):
+    if (m.distance < 0.8 * n.distance):
         good_matches.append(m)
 
 # Visualize matches
@@ -89,15 +96,16 @@ if len(good_matches) >= MIN_MATCH_COUNT:
     dst_pts = np.float32([keypoints_large[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
     M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
 
-    h, w = small_image.shape
+    h, w = small_image_resized.shape
     pts = np.float32([[0, 0], [0, h - 1], [w - 1, h - 1], [w - 1, 0]]).reshape(-1, 1, 2)
     dst = cv2.perspectiveTransform(pts, M)
 
     large_image_with_box = cv2.polylines(
-        large_image_resized, [np.int32(dst)], isClosed=True, color=(0, 255, 255), thickness=10
+        large_image_resized, [np.int32(dst)], isClosed=True, color=(255, 255, 0), thickness=10
     )
     plt.figure(figsize=(12, 8))
-    plt.imshow(large_image_with_box, cmap='gray')
+    plt.imshow(large_image_with_box)
+    #plt.imshow(large_image_with_box, cmap='gray')
     plt.title("Detected Region")
     plt.axis("off")
     plt.show()
