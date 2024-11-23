@@ -14,9 +14,9 @@ print(f"Using device: {device}")
 # Load SuperGlue configuration with updated parameters
 superglue_config = {
     'superpoint': {
-        'nms_radius': 3,
-        'keypoint_threshold': 0.01,  # Increased for better filtering
-        'max_keypoints': 2048,
+        'nms_radius': 5,
+        'keypoint_threshold': 0.001,  # Increased for better filtering
+        'max_keypoints': 4096,
     },
     'superglue': {
         'weights': 'outdoor',
@@ -26,7 +26,7 @@ matching = Matching(superglue_config).eval().to(device)
 
 # Load images
 large_image_path = 'bruchsal_highres.jpg'
-small_image_path = 'luftbild5.jpg'
+small_image_path = ('luftbild2.jpg')
 
 large_image = cv2.imread(large_image_path, cv2.IMREAD_GRAYSCALE)
 small_image = cv2.imread(small_image_path, cv2.IMREAD_GRAYSCALE)
@@ -43,6 +43,9 @@ def resize_with_aspect_ratio(image, max_dim):
 
 large_image_resized = resize_with_aspect_ratio(large_image, 4096)
 small_image_resized = resize_with_aspect_ratio(small_image, 2048)
+
+# Convert large image to tensor
+large_tensor = frame2tensor(large_image_resized, device)
 
 # Define a function to rotate an image
 def rotate_image(image, angle):
@@ -149,4 +152,4 @@ if best_keypoints0 is not None and best_keypoints1 is not None:
     plt.axis("off")
     plt.title("Best Matches")
     plt.savefig("best_matches.png")
-    plt.show()
+    #plt.show()

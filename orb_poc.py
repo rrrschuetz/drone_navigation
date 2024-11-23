@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 
 # Load the large (satellite) and small images
 large_image_path = 'bruchsal_highres.jpg'  # Replace with path to the large satellite image
-small_image_path = 'luftbild2.jpg'      # Replace with path to the smaller image
+small_image_path = 'small_imag8.jpg'      # Replace with path to the smaller image
 
 large_image = cv2.imread(large_image_path, cv2.IMREAD_GRAYSCALE)
 small_image = cv2.imread(small_image_path, cv2.IMREAD_GRAYSCALE)
@@ -17,15 +17,21 @@ large_image_enhanced = cv2.equalizeHist(large_image)
 kernel = np.array([[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]])
 large_image_enhanced = cv2.filter2D(large_image_enhanced, -1, kernel)
 
-# Resize large image for faster processing
-scale_factor = 0.5
-large_image_resized = cv2.resize(large_image_enhanced, None, fx=scale_factor, fy=scale_factor)
+# Resize images while preserving aspect ratio
+def resize_with_aspect_ratio(image, max_dim):
+    h, w = image.shape
+    scale = max_dim / max(h, w)
+    new_h, new_w = int(h * scale), int(w * scale)
+    return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+large_image_resized = resize_with_aspect_ratio(large_image, 4096)
+small_image_resized = resize_with_aspect_ratio(small_image, 2048)
 
 # Initialize the AKAZE detector
 detector = cv2.AKAZE_create()
 detector.setThreshold(0.001)  # Lower threshold for more keypoints
 keypoints_large, descriptors_large = detector.detectAndCompute(large_image_resized, None)
-keypoints_small, descriptors_small = detector.detectAndCompute(small_image, None)
+keypoints_small, descriptors_small = detector.detectAndCompute(small_image_resized, None)
 
 # Fallback to ORB if AKAZE fails
 if len(keypoints_large) == 0:
@@ -44,8 +50,8 @@ def visualize_keypoints(image, keypoints, title):
     plt.axis("off")
     plt.show()
 
-#visualize_keypoints(large_image_resized, keypoints_large, "Keypoints in Large Image")
-#visualize_keypoints(small_image, keypoints_small, "Keypoints in Small Image")
+visualize_keypoints(large_image_resized, keypoints_large, "Keypoints in Large Image")
+visualize_keypoints(small_image, keypoints_small, "Keypoints in Small Image")
 
 # Use appropriate norm based on detector type
 if "ORB" in type(detector).__name__:
@@ -74,7 +80,7 @@ def visualize_matches(img1, kp1, img2, kp2, matches, title):
     plt.axis("off")
     plt.show()
 
-visualize_matches(small_image, keypoints_small, large_image_resized, keypoints_large, good_matches, "Good Matches")
+visualize_matches(small_image_resized, keypoints_small, large_image_resized, keypoints_large, good_matches, "Good Matches")
 
 # Check for enough matches
 MIN_MATCH_COUNT = 10
