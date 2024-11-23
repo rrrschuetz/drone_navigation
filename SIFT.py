@@ -12,16 +12,34 @@ small_image = cv2.imread(small_image_path, cv2.IMREAD_GRAYSCALE)
 if large_image is None or small_image is None:
     raise FileNotFoundError("One or both image paths are incorrect.")
 
-# Enhance and preprocess the large image
-large_image_enhanced = cv2.equalizeHist(large_image)
-kernel = np.array([[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]])
-large_image_enhanced = cv2.filter2D(large_image_enhanced, -1, kernel)
+def preprocess(image):
+    """
+    Enhanced preprocessing pipeline with improved edge sharpening and watermark removal.
+    """
+    # Step 1: CLAHE (Local Histogram Equalization)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(image)
 
-# Enhance and preprocess the small image
-small_image_enhanced = cv2.equalizeHist(small_image)
-kernel = np.array([[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]])
-small_image_enhanced = cv2.filter2D(small_image_enhanced, -1, kernel)
+    # Step 2: Noise Reduction
+    denoised = cv2.GaussianBlur(enhanced, (5, 5), 0)
 
+    # Step 3: Watermark Removal
+    # Threshold to create a mask for the watermark
+    _, watermark_mask = cv2.threshold(enhanced, 200, 255, cv2.THRESH_BINARY)
+    inpainted = cv2.inpaint(denoised, watermark_mask, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
+
+    # Step 4: Edge Sharpening (Unsharp Masking)
+    gaussian_blurred = cv2.GaussianBlur(inpainted, (9, 9), 2)
+    sharpened = cv2.addWeighted(inpainted, 1.5, gaussian_blurred, -0.5, 0)
+
+    # Step 5: Normalize Pixel Intensities
+    normalized = cv2.normalize(sharpened, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
+
+    return normalized
+
+
+large_image_enhanced = preprocess(large_image)
+small_image_enhanced = preprocess(small_image)
 
 # Resize images while preserving aspect ratio
 def resize_with_aspect_ratio(image, max_dim):
@@ -31,7 +49,7 @@ def resize_with_aspect_ratio(image, max_dim):
     return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
 large_image_resized = resize_with_aspect_ratio(large_image_enhanced, 4096)
-small_image_resized = resize_with_aspect_ratio(small_image_enhanced,  1024)
+small_image_resized = resize_with_aspect_ratio(small_image_enhanced,  2048)
 
 # Initialize SIFT detector
 sift = cv2.SIFT_create()
@@ -76,7 +94,7 @@ def visualize_matches(img1, kp1, img2, kp2, matches, title):
 visualize_matches(small_image_resized, keypoints_small, large_image_resized, keypoints_large, good_matches, "Good Matches")
 
 # Check for enough matches and estimate homography
-MIN_MATCH_COUNT = 20
+MIN_MATCH_COUNT = 10
 if len(good_matches) >= MIN_MATCH_COUNT:
     src_pts = np.float32([keypoints_small[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
     dst_pts = np.float32([keypoints_large[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
