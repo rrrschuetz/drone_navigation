@@ -1,11 +1,13 @@
-import sys
-sys.path.append('/home/rrrschuetz/LoFTR')  # Update to the path of your R2D2 repository
-
+from kornia.feature import LoFTR
 import cv2
 import torch
+import matplotlib.pyplot as plt
+from sklearn.cluster import DBSCAN
 import numpy as np
-from src.loftr import LoFTR
-from src.utils import plotting as plot_matches
+from matplotlib.patches import Polygon
+from matplotlib.collections import PatchCollection
+from matplotlib import pyplot as plt
+from scipy.spatial import ConvexHull
 
 # Initialize LoFTR model with outdoor weights
 config = {
@@ -54,13 +56,22 @@ config = {
         "threshold": 0.2,  # Threshold for fine matching
     },
 }
+#loftr = LoFTR(config=config)
 
-loftr = LoFTR(config=config)
-loftr.load_state_dict(torch.load("outdoor.ckpt")["state_dict"])
+# Load Kornia LoFTR model
+loftr = LoFTR(pretrained="outdoor")
+
+# Load checkpoint
+checkpoint = torch.hub.load_state_dict_from_url(
+    "https://github.com/zju3dv/LoFTR/releases/download/1.0.0/loftr_outdoor.ckpt",
+    map_location="cpu"
+)
+loftr.load_state_dict(checkpoint["state_dict"])
 loftr.eval()
 
 # Load images (Ensure grayscale conversion)
 large_image_path = "48MP-200.JPG"
+#large_image_path = "karlsdorf_highres2.jpg"
 small_image_path = "normal-120.JPG"
 
 large_image = cv2.imread(large_image_path, cv2.IMREAD_GRAYSCALE)
@@ -101,16 +112,64 @@ matches = correspondences["confidence"].cpu().numpy()
 
 print(f"Number of matches: {len(matches)}")
 
-# Visualize matches
-def visualize_matches(image1, image2, keypoints1, keypoints2, matches, title="LoFTR Matches"):
-    """Visualize the matched keypoints between two images."""
-    matched_image = plot_matches(
-        image1, image2, keypoints1, keypoints2, matches
-    )
-    cv2.imshow(title, matched_image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+def visualize_matches(img1, img2, kp1, kp2):
+    # Calculate resizing ratios
+    height = min(img1.shape[0], img2.shape[0])  # Target height
+    scale1 = height / img1.shape[0]
+    scale2 = height / img2.shape[0]
 
-visualize_matches(
-    large_image_resized, small_image_resized, keypoints_large, keypoints_small, matches
-)
+    # Resize images
+    img1_resized = cv2.resize(img1, (int(img1.shape[1] * scale1), height))
+    img2_resized = cv2.resize(img2, (int(img2.shape[1] * scale2), height))
+
+    # Rescale keypoints
+    kp1_rescaled = [(x * scale1, y * scale1) for (x, y) in kp1]
+    kp2_rescaled = [(x * scale2, y * scale2) for (x, y) in kp2]
+
+    # Combine images side-by-side
+    img_combined = cv2.hconcat([img1_resized, img2_resized])
+    h1, w1 = img1_resized.shape[:2]
+
+    # Adjust second keypoints' x-coordinates for concatenated image
+    kp2_adjusted = [(x + w1, y) for (x, y) in kp2_rescaled]
+
+    # Combine keypoints from both images for clustering
+    combined_keypoints = np.array(kp1_rescaled + kp2_adjusted)
+
+    # Perform clustering (DBSCAN)
+    clustering = DBSCAN(eps=30, min_samples=5).fit(combined_keypoints)
+    labels = clustering.labels_
+
+    # Identify the largest cluster
+    unique_labels, counts = np.unique(labels, return_counts=True)
+    largest_cluster_label = unique_labels[np.argmax(counts)]
+    if largest_cluster_label == -1:  # If largest cluster is noise, ignore
+        largest_cluster_label = unique_labels[np.argsort(counts)[-2]]
+
+    # Filter keypoints in the largest cluster
+    largest_cluster_points = combined_keypoints[labels == largest_cluster_label]
+
+    # Create polygon around the largest cluster
+    from scipy.spatial import ConvexHull
+    hull = ConvexHull(largest_cluster_points)
+    polygon = largest_cluster_points[hull.vertices]
+
+    # Plot the matches and polygon
+    plt.figure(figsize=(12, 8))
+    plt.imshow(img_combined, cmap="gray")
+    plt.axis("off")
+
+    # Draw matches
+    for (x1, y1), (x2, y2) in zip(kp1_rescaled, kp2_adjusted):
+        plt.plot([x1, x2], [y1, y2], "r", linewidth=0.8)  # Line between matches
+        plt.scatter([x1, x2], [y1, y2], color="cyan", s=5)  # Keypoints
+
+    # Draw polygon
+    polygon_patch = Polygon(polygon, closed=True, fill=False, edgecolor='yellow', linewidth=2)
+    plt.gca().add_patch(polygon_patch)
+
+    plt.title("Matches with Polygon Around Largest Cluster")
+    plt.show()
+
+visualize_matches(large_image_resized, small_image_resized, keypoints_large, keypoints_small)
+
