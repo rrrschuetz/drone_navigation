@@ -82,7 +82,6 @@ def extract(input_image, model):
 
     return features
 
-
 large_features = extract(large_image_resized, model)
 small_features = extract(small_image_resized, model)
 
@@ -111,19 +110,25 @@ keypoints1, keypoints2, good_matches = match_features(small_features, large_feat
 def filter_good_matches(matches, threshold=0.75):
     return [m for m in matches if m.distance < threshold]
 
-good_matches = filter_good_matches(good_matches, threshold=30)  # Adjust threshold as needed
+good_matches = filter_good_matches(good_matches, threshold=0.75)  # Adjust threshold as needed
 
 def resize_with_fixed_height(image, target_height):
     h, w = image.shape[:2]
+    print(target_height, h)
     scale = target_height / h
     new_width = int(w * scale)
-    return cv2.resize(image, (new_width, target_height), interpolation=cv2.INTER_AREA)
+    return scale, cv2.resize(image, (new_width, target_height), interpolation=cv2.INTER_AREA)
 
 def visualize_matches(img1, img2, kp1, kp2, matches):
     # Resize images to the same height
     target_height = min(img1.shape[0], img2.shape[0])
-    img1_resized = resize_with_fixed_height(img1, target_height)
-    img2_resized = resize_with_fixed_height(img2, target_height)
+    scale1, img1_resized = resize_with_fixed_height(img1, target_height)
+    scale2, img2_resized = resize_with_fixed_height(img2, target_height)
+
+    kp1_rescaled = [(kp[0] * scale1 , kp[1] * scale1 *0.5) for kp in kp1]
+    kp2_rescaled = [(kp[0] * scale2 , kp[1] * scale2 *0.5) for kp in kp2]
+    kp1 = kp1_rescaled
+    kp2 = kp2_rescaled
 
     # Ensure data types match
     img1_resized = img1_resized.astype('uint8')
