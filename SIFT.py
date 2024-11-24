@@ -2,9 +2,10 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 
-# Load the large (satellite) and small images
-large_image_path = "bruchsal_highres.jpg"  # Replace with path to the large satellite image
-small_image_path = "luftbild6.jpg"         # Replace with path to the smaller image
+# Load the large (satellite) and small (drone) images
+large_image_path = "karlsdorf_highres2.jpg"  # Path to the large satellite image
+#large_image_path = "48MP-200.JPG"  # Path to the large satellite image
+small_image_path = "normal-120.JPG"         # Path to the smaller drone image
 
 large_image = cv2.imread(large_image_path, cv2.IMREAD_GRAYSCALE)
 small_image = cv2.imread(small_image_path, cv2.IMREAD_GRAYSCALE)
@@ -12,36 +13,33 @@ small_image = cv2.imread(small_image_path, cv2.IMREAD_GRAYSCALE)
 if large_image is None or small_image is None:
     raise FileNotFoundError("One or both image paths are incorrect.")
 
-def preprocess(image):
+# Preprocessing function
+def preprocess(image, is_large=False):
     """
-    Enhanced preprocessing pipeline with improved edge sharpening and watermark removal.
+    Preprocessing pipeline tailored for drone and satellite images.
     """
-    # Step 1: CLAHE (Local Histogram Equalization)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    # Step 1: Adjust CLAHE for satellite image scale
+    tile_size = (16, 16) if is_large else (8, 8)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=tile_size)
     enhanced = clahe.apply(image)
 
-    # Step 2: Noise Reduction
-    denoised = cv2.GaussianBlur(enhanced, (5, 5), 0)
+    # Step 2: Edge Detection and Filtering
+    kernel = np.array([[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]])
+    filtered = cv2.filter2D(enhanced, -1, kernel)
 
-    # Step 3: Watermark Removal
-    # Threshold to create a mask for the watermark
-    _, watermark_mask = cv2.threshold(enhanced, 200, 255, cv2.THRESH_BINARY)
-    inpainted = cv2.inpaint(denoised, watermark_mask, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
+    # Blend edges less aggressively
+    edge_boosted = cv2.addWeighted(enhanced, 1.0, filtered, 0.1, 0)
 
-    # Step 4: Edge Sharpening (Unsharp Masking)
-    gaussian_blurred = cv2.GaussianBlur(inpainted, (9, 9), 2)
-    sharpened = cv2.addWeighted(inpainted, 1.5, gaussian_blurred, -0.5, 0)
-
-    # Step 5: Normalize Pixel Intensities
-    normalized = cv2.normalize(sharpened, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
+    # Step 3: Normalize intensities
+    normalized = cv2.normalize(edge_boosted, None, 0, 255, cv2.NORM_MINMAX)
 
     return normalized
 
+# Preprocess both images
+large_image_enhanced = preprocess(large_image, is_large=True)
+small_image_enhanced = preprocess(small_image, is_large=False)
 
-large_image_enhanced = preprocess(large_image)
-small_image_enhanced = preprocess(small_image)
-
-# Resize images while preserving aspect ratio
+# Resize images to manage scale differences
 def resize_with_aspect_ratio(image, max_dim):
     h, w = image.shape
     scale = max_dim / max(h, w)
@@ -49,12 +47,10 @@ def resize_with_aspect_ratio(image, max_dim):
     return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
 large_image_resized = resize_with_aspect_ratio(large_image_enhanced, 4096)
-small_image_resized = resize_with_aspect_ratio(small_image_enhanced,  2048)
+small_image_resized = resize_with_aspect_ratio(small_image_enhanced, 1024)
 
-# Initialize SIFT detector
-sift = cv2.SIFT_create()
-
-# Detect and compute keypoints and descriptors
+# Detect and compute keypoints and descriptors using SIFT
+sift = cv2.SIFT_create(contrastThreshold=0.02, edgeThreshold=20)  # Tuned for larger-scale features
 keypoints_large, descriptors_large = sift.detectAndCompute(large_image_resized, None)
 keypoints_small, descriptors_small = sift.detectAndCompute(small_image_resized, None)
 
@@ -79,7 +75,7 @@ matches = bf.knnMatch(descriptors_small, descriptors_large, k=2)
 # Apply Lowe's ratio test
 good_matches = []
 for m, n in matches:
-    if m.distance < 0.7 * n.distance:  # Lowe's ratio
+    if m.distance < 0.6 * n.distance:  # Stricter ratio for satellite images
         good_matches.append(m)
 
 # Visualize matches
@@ -94,7 +90,7 @@ def visualize_matches(img1, kp1, img2, kp2, matches, title):
 visualize_matches(small_image_resized, keypoints_small, large_image_resized, keypoints_large, good_matches, "Good Matches")
 
 # Check for enough matches and estimate homography
-MIN_MATCH_COUNT = 10
+MIN_MATCH_COUNT = 8
 if len(good_matches) >= MIN_MATCH_COUNT:
     src_pts = np.float32([keypoints_small[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
     dst_pts = np.float32([keypoints_large[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
