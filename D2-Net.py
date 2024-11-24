@@ -1,10 +1,11 @@
 import sys
-sys.path.append('/home/rrrschuetz/d2-net/')
+sys.path.append('/home/rrrschuetz/d2_net/')
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
-from d2_net.models.d2_net import D2Net
-from d2_net.utils.pyramid import process_multiscale
+from models.d2net import D2Net
+#from utils.base_model import BaseModel
+#from d2_net.utils.pyramid import process_multiscale
 import torch
 
 # Load images
@@ -16,15 +17,23 @@ small_image = cv2.imread(small_image_path, cv2.COLOR_BGR2GRAY)
 
 if large_image is None or small_image is None:
     raise FileNotFoundError("One or both image paths are incorrect.")
+print("Images loaded.")
 
 # Preprocessing function
-def preprocess(image, is_large=False):
-    """
-    Preprocessing tailored for D2-Net inputs.
-    """
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(16, 16) if is_large else (8, 8))
+def preprocess(image, is_large):
+    # Convert to grayscale
+    if len(image.shape) == 3:  # Check if image is multi-channel
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Apply CLAHE
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     enhanced = clahe.apply(image)
-    return cv2.normalize(enhanced, None, 0, 255, cv2.NORM_MINMAX)
+
+    # Normalize if needed
+    enhanced = cv2.normalize(enhanced, None, 0, 255, cv2.NORM_MINMAX).astype('uint8')
+
+    return enhanced
+
 
 # Preprocess both images
 large_image_preprocessed = preprocess(large_image, is_large=True)
@@ -39,21 +48,27 @@ def resize_with_aspect_ratio(image, max_dim):
 
 large_image_resized = resize_with_aspect_ratio(large_image_preprocessed, 1024)
 small_image_resized = resize_with_aspect_ratio(small_image_preprocessed, 1024)
+print("Images loaded and preprocessed.")
 
 # D2-Net Model Initialization
-model = D2Net(model_file='models/d2_tf.pth', use_relu=True)  # Use the path to your pretrained model
+conf = {
+    'use_relu': True,
+    'model_name': 'd2_tf.pth'  # Adjust the path to the pretrained model
+}
+model = D2Net(conf=conf)  # Use the path to your pretrained model
 model = model.cuda() if torch.cuda.is_available() else model
+print("Model loaded.")
 
 # Extract features with D2-Net
-def extract_features(image, model):
+def extract(image, model):
     with torch.no_grad():
         input_image = torch.tensor(image[np.newaxis, np.newaxis, :, :].astype(np.float32) / 255.0)
         input_image = input_image.cuda() if torch.cuda.is_available() else input_image
         features = process_multiscale(input_image, model)  # Extract multiscale features
     return features
 
-large_features = extract_features(large_image_resized, model)
-small_features = extract_features(small_image_resized, model)
+large_features = extract(large_image_resized, model)
+small_features = extract(small_image_resized, model)
 
 # Match descriptors using BFMatcher
 def match_features(features1, features2):
