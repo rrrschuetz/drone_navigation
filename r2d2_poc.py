@@ -6,8 +6,40 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torch
 from pathlib import Path
+#from r2d2.models import R2D2
 
-from r2d2.extract import load_model, extract_keypoints
+# Load the R2D2 model
+def load_r2d2_model(model_path):
+    """
+    Load the R2D2 model from the specified path.
+    """
+    model = R2D2.load_from_checkpoint(model_path)
+    model.eval()
+    if torch.cuda.is_available():
+        model = model.cuda()
+    return model
+
+model_path = "/home/rrrschuetz/r2d2/models/r2d2_WASF_N16.pt"
+model = load_r2d2_model(model_path)
+
+def extract_features(image, model):
+    """
+    Extract features using the R2D2 model.
+    """
+    with torch.no_grad():
+        # Convert image to tensor
+        tensor_image = torch.tensor(image[np.newaxis, np.newaxis, :, :].astype(np.float32) / 255.0)
+        if torch.cuda.is_available():
+            tensor_image = tensor_image.cuda()
+
+        # Perform feature extraction
+        outputs = model(tensor_image)
+        keypoints = outputs['keypoints'].cpu().numpy()
+        descriptors = outputs['descriptors'].cpu().numpy()
+
+    return keypoints, descriptors
+
+
 
 # Paths to images
 large_image_path = "karlsdorf_highres2.jpg"  # Path to large satellite image
