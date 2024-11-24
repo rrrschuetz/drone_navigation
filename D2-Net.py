@@ -3,12 +3,13 @@ sys.path.append('/home/rrrschuetz/d2_net/')
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
-from models.d2net import D2Net
+from lib.model_test import D2Net
 from lib.pyramid import process_multiscale
 import torch
 
 # Load images
-large_image_path = "karlsdorf_highres2.jpg"
+#large_image_path = "karlsdorf_highres2.jpg"
+large_image_path = "48MP-200.JPG"
 small_image_path = "normal-120.JPG"
 
 large_image = cv2.imread(large_image_path, cv2.COLOR_BGR2GRAY)
@@ -50,56 +51,110 @@ small_image_resized = resize_with_aspect_ratio(small_image_preprocessed, 1024)
 print("Images loaded and preprocessed.")
 
 # D2-Net Model Initialization
-conf = {
-    'use_relu': True,
-    'model_name': 'd2_tf.pth'  # Adjust the path to the pretrained model
-}
-model = D2Net(conf=conf)  # Use the path to your pretrained model
+model = D2Net(model_file='/home/rrrschuetz/d2_net/models/d2_tf.pth')  # Use the path to your pretrained model
 model = model.cuda() if torch.cuda.is_available() else model
 print("Model loaded.")
 
-# Extract features with D2-Net
-def extract(image, model):
+def extract(input_image, model):
+    # Ensure input image has 3 channels (convert grayscale to RGB)
+    if len(input_image.shape) == 2:  # Grayscale image
+        input_image = cv2.cvtColor(input_image, cv2.COLOR_GRAY2RGB)
+
+    # Convert NumPy array to PyTorch tensor
+    input_tensor = torch.tensor(input_image, dtype=torch.float32).permute(2, 0, 1)  # [C, H, W]
+
+    # Normalize and add batch dimension
+    input_tensor = input_tensor / 255.0  # Normalize to [0, 1]
+    input_tensor = input_tensor.unsqueeze(0)  # [B, C, H, W]
+
+    # Move to the same device as the model
+    device = next(model.parameters()).device
+    input_tensor = input_tensor.to(device)
+
+    # Extract features using the model
     with torch.no_grad():
-        input_image = torch.tensor(image[np.newaxis, np.newaxis, :, :].astype(np.float32) / 255.0)
-        input_image = input_image.cuda() if torch.cuda.is_available() else input_image
-        features = process_multiscale(input_image, model)  # Extract multiscale features
+        # Ensure the model is on the desired device
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model.to(device)
+        # Move input image to the same device as the model
+        input_tensor = input_tensor.to(device)
+        features = process_multiscale(input_tensor, model)  # Ensure `process_multiscale` handles tensors correctly
+
     return features
+
 
 large_features = extract(large_image_resized, model)
 small_features = extract(small_image_resized, model)
 
 # Match descriptors using BFMatcher
 def match_features(features1, features2):
-    kp1, desc1 = features1['keypoints'], features1['descriptors']
-    kp2, desc2 = features2['keypoints'], features2['descriptors']
-    bf = cv2.BFMatcher(cv2.NORM_L2)
-    matches = bf.knnMatch(desc1, desc2, k=2)
+    # Unpack the tuples
+    kp1, scores1, desc1 = features1
+    kp2, scores2, desc2 = features2
 
-    # Apply Lowe's ratio test
-    good_matches = []
-    for m, n in matches:
-        if m.distance < 0.75 * n.distance:
-            good_matches.append(m)
+    # Use a nearest-neighbor search to find matches
+    bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
+    matches = bf.match(desc1, desc2)
 
-    return kp1, kp2, good_matches
+    # Sort matches by distance (optional)
+    matches = sorted(matches, key=lambda x: x.distance)
+
+    # Extract keypoints for visualization
+    keypoints1 = kp1[:, :2]  # Only (x, y) coordinates
+    keypoints2 = kp2[:, :2]
+    good_matches = matches  # You can filter matches further if needed
+
+    return keypoints1, keypoints2, good_matches
 
 keypoints1, keypoints2, good_matches = match_features(small_features, large_features)
 
-# Visualize Matches
-def visualize_matches(img1, kp1, img2, kp2, matches, title):
-    img_matches = cv2.drawMatches(
-        img1, [cv2.KeyPoint(*kp[:2], 1) for kp in kp1],
-        img2, [cv2.KeyPoint(*kp[:2], 1) for kp in kp2],
-        matches, None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS
-    )
+def filter_good_matches(matches, threshold=0.75):
+    return [m for m in matches if m.distance < threshold]
+
+good_matches = filter_good_matches(good_matches, threshold=30)  # Adjust threshold as needed
+
+def resize_with_fixed_height(image, target_height):
+    h, w = image.shape[:2]
+    scale = target_height / h
+    new_width = int(w * scale)
+    return cv2.resize(image, (new_width, target_height), interpolation=cv2.INTER_AREA)
+
+def visualize_matches(img1, img2, kp1, kp2, matches):
+    # Resize images to the same height
+    target_height = min(img1.shape[0], img2.shape[0])
+    img1_resized = resize_with_fixed_height(img1, target_height)
+    img2_resized = resize_with_fixed_height(img2, target_height)
+
+    # Ensure data types match
+    img1_resized = img1_resized.astype('uint8')
+    img2_resized = img2_resized.astype('uint8')
+
+    # Concatenate images horizontally
+    combined_image = cv2.hconcat([img1_resized, img2_resized])
+
+    # Adjust second image keypoints
+    offset_width = img1_resized.shape[1]
+    kp2_adjusted = [(x + offset_width, y) for (x, y) in kp2]
+
+    # Plot matches
     plt.figure(figsize=(12, 8))
-    plt.imshow(img_matches)
-    plt.title(title)
+    plt.imshow(cv2.cvtColor(combined_image, cv2.COLOR_BGR2RGB))
     plt.axis("off")
+
+    for match in matches:
+        x1, y1 = kp1[match.queryIdx]
+        x2, y2 = kp2_adjusted[match.trainIdx]
+        plt.plot([x1, x2], [y1, y2], "r", linewidth=0.8)
+        plt.scatter([x1, x2], [y1, y2], color="cyan", s=5)
+
+    plt.title("Feature Matches")
     plt.show()
 
-visualize_matches(small_image_resized, keypoints1, large_image_resized, keypoints2, good_matches, "D2-Net Matches")
+
+print(f"Large image original: {large_image.shape}, resized: {large_image_resized.shape}")
+print(f"Small image original: {small_image.shape}, resized: {small_image_resized.shape}")
+
+visualize_matches(small_image_resized, large_image_resized, keypoints1, keypoints2, good_matches)
 
 # Check for homography if enough matches are found
 if len(good_matches) > 10:
