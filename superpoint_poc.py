@@ -1,42 +1,14 @@
+
+
 import sys
-sys.path.append('/home/rrrschuetz/r2d2')  # Update to the path of your R2D2 repository
+sys.path.append('/home/rrrschuetz/superpoint')  # Update to the path of your R2D2 repository
 
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
-
-def extract_features(image, model):
-    """
-    Extract features using the R2D2 model.
-    """
-    with torch.no_grad():
-        # Convert image to tensor
-        tensor_image = torch.tensor(image[np.newaxis, np.newaxis, :, :].astype(np.float32) / 255.0)
-        if torch.cuda.is_available():
-            tensor_image = tensor_image.cuda()
-
-        # Perform feature extraction
-        outputs = model(tensor_image)
-        keypoints = outputs['keypoints'].cpu().numpy()
-        descriptors = outputs['descriptors'].cpu().numpy()
-
-    return keypoints, descriptors
-
-# Define a placeholder for the model structure
-class R2D2Model(torch.nn.Module):
-    def __init__(self):
-        super(R2D2Model, self).__init__()
-        # Define the architecture here (or refer to older versions of R2D2)
-
-# Load weights into the model
-model_path = "/home/rrrschuetz/r2d2/models/r2d2_WASF_N16.pt"
-model = R2D2Model()
-state_dict = torch.load(model_path)
-model.load_state_dict(state_dict)
-if torch.cuda.is_available():
-    model = model.cuda()
-model.eval()
+from pathlib import Path
+from superpoint.models.superpoint import SuperPoint  # Ensure this path matches your repository
 
 # Paths to images
 large_image_path = "karlsdorf_highres2.jpg"  # Path to large satellite image
@@ -52,7 +24,7 @@ if large_image is None or small_image is None:
 # Preprocessing function
 def preprocess(image):
     """
-    Normalize the image to improve feature detection.
+    Normalize and enhance the image for better feature detection.
     """
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     enhanced = clahe.apply(image)
@@ -61,27 +33,44 @@ def preprocess(image):
 large_image_preprocessed = preprocess(large_image)
 small_image_preprocessed = preprocess(small_image)
 
-# Load the R2D2 model
-model_path = "/path/to/r2d2/models/r2d2_WASF_N16.pt"  # Update this path
-model = load_model(model_path)
-model = model.eval().cuda() if torch.cuda.is_available() else model.eval()
+# Resize images for consistent processing
+def resize_with_aspect_ratio(image, max_dim):
+    h, w = image.shape
+    scale = max_dim / max(h, w)
+    new_h, new_w = int(h * scale), int(w * scale)
+    return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-# Extract keypoints and descriptors using R2D2
+large_image_resized = resize_with_aspect_ratio(large_image_preprocessed, 1024)
+small_image_resized = resize_with_aspect_ratio(small_image_preprocessed, 1024)
+
+# Initialize SuperPoint Model
+model_path = "SuperPointPretrainedNetwork/models/superpoint_v1.pth"  # Update this path
+superpoint = SuperPoint({})
+superpoint.load_state_dict(torch.load(model_path))
+superpoint.eval()
+if torch.cuda.is_available():
+    superpoint = superpoint.cuda()
+
+# Extract keypoints and descriptors using SuperPoint
 def extract_features(image, model):
     """
-    Extract keypoints and descriptors using R2D2.
+    Extract keypoints and descriptors using SuperPoint.
     """
     with torch.no_grad():
         # Convert image to PyTorch tensor
         tensor_image = torch.tensor(image[np.newaxis, np.newaxis, :, :].astype(np.float32) / 255.0)
-        tensor_image = tensor_image.cuda() if torch.cuda.is_available() else tensor_image
+        if torch.cuda.is_available():
+            tensor_image = tensor_image.cuda()
 
-        # Extract keypoints and descriptors
-        keypoints, descriptors = extract_keypoints(model, tensor_image)
+        # Perform inference
+        outputs = model({'image': tensor_image})
+        keypoints = outputs['keypoints'][0].cpu().numpy()
+        descriptors = outputs['descriptors'][0].cpu().numpy()
+
     return keypoints, descriptors
 
-keypoints_large, descriptors_large = extract_features(large_image_preprocessed, model)
-keypoints_small, descriptors_small = extract_features(small_image_preprocessed, model)
+keypoints_large, descriptors_large = extract_features(large_image_resized, superpoint)
+keypoints_small, descriptors_small = extract_features(small_image_resized, superpoint)
 
 # Match descriptors using BFMatcher
 def match_features(desc1, desc2):
@@ -89,7 +78,7 @@ def match_features(desc1, desc2):
     Match descriptors using BFMatcher with Lowe's ratio test.
     """
     bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=False)
-    matches = bf.knnMatch(desc1, desc2, k=2)
+    matches = bf.knnMatch(desc1.T, desc2.T, k=2)
 
     # Lowe's ratio test
     good_matches = []
@@ -114,22 +103,22 @@ def visualize_matches(img1, kp1, img2, kp2, matches, title):
     plt.axis("off")
     plt.show()
 
-visualize_matches(small_image_preprocessed, keypoints_small, large_image_preprocessed, keypoints_large, good_matches, "R2D2 Matches")
+visualize_matches(small_image_resized, keypoints_small, large_image_resized, keypoints_large, good_matches, "SuperPoint Matches")
 
 # Check for enough matches and compute homography
 MIN_MATCH_COUNT = 10
 if len(good_matches) >= MIN_MATCH_COUNT:
-    src_pts = np.float32([keypoints_small[m.queryIdx][:2] for m in good_matches]).reshape(-1, 1, 2)
-    dst_pts = np.float32([keypoints_large[m.trainIdx][:2] for m in good_matches]).reshape(-1, 1, 2)
+    src_pts = np.float32([keypoints_small[m.queryIdx] for m in good_matches]).reshape(-1, 1, 2)
+    dst_pts = np.float32([keypoints_large[m.trainIdx] for m in good_matches]).reshape(-1, 1, 2)
 
     M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
 
     # Draw detected region
-    h, w = small_image_preprocessed.shape
+    h, w = small_image_resized.shape
     pts = np.float32([[0, 0], [0, h - 1], [w - 1, h - 1], [w - 1, 0]]).reshape(-1, 1, 2)
     dst = cv2.perspectiveTransform(pts, M)
 
-    large_image_color = cv2.cvtColor(large_image_preprocessed, cv2.COLOR_GRAY2BGR)
+    large_image_color = cv2.cvtColor(large_image_resized, cv2.COLOR_GRAY2BGR)
     detected_image = cv2.polylines(
         large_image_color, [np.int32(dst)], isClosed=True, color=(0, 255, 255), thickness=5
     )
