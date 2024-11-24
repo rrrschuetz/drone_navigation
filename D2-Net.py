@@ -4,8 +4,7 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 from models.d2net import D2Net
-#from utils.base_model import BaseModel
-#from d2_net.utils.pyramid import process_multiscale
+from lib.pyramid import process_multiscale
 import torch
 
 # Load images
