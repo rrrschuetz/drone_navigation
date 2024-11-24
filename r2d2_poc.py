@@ -1,12 +1,11 @@
+import sys
+sys.path.append('/home/rrrschuetz/r2d2')  # Update to the path of your R2D2 repository
+
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
 from pathlib import Path
-
-# Add R2D2 to the Python path
-import sys
-sys.path.append('/home/rrrschuetz/r2d2')  # Update to the path of your R2D2 repository
 
 from r2d2.extract import load_model, extract_keypoints
 
