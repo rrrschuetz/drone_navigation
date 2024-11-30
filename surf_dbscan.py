@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+from onnx.gen_proto import ELSE_ONNX_ML_REGEX
 from sklearn.cluster import DBSCAN
 
 
@@ -114,7 +115,7 @@ def ensure_minimum_matches(small_image, large_image, min_matches=10, max_attempt
     """
     Dynamically adjust parameters to ensure a minimum number of matches.
     """
-    hessian_threshold = 1000
+    hessian_threshold = 5000
     ratio_test = 0.7
     attempts = 0
 
@@ -140,15 +141,14 @@ def ensure_minimum_matches(small_image, large_image, min_matches=10, max_attempt
             return keypoints_small, keypoints_large, filtered_matches
 
         # Adjust parameters
-        hessian_threshold = max(100, hessian_threshold - 100)  # Lower Hessian threshold
+        hessian_threshold = max(500, hessian_threshold - 100)  # Lower Hessian threshold
         ratio_test = min(0.9, ratio_test + 0.05)  # Relax Lowe's ratio test
         attempts += 1
 
-    raise RuntimeError(
-        f"Unable to find at least {min_matches} spatially consistent matches after {max_attempts} attempts.")
+    return keypoints_small, keypoints_large, None
 
 
-def draw_keypoints_and_matches(image, keypoints, matches, matched_keypoints, kp_color=(0, 255, 0),
+def draw_keypoints_and_matches(image, keypoints, matched_keypoints, kp_color=(0, 255, 0),
                                match_color=(255, 0, 0)):
     """
     Draw all keypoints and matched keypoints on the image.
@@ -158,19 +158,24 @@ def draw_keypoints_and_matches(image, keypoints, matches, matched_keypoints, kp_
     # Draw all keypoints
     for kp in keypoints:
         x, y = int(kp.pt[0]), int(kp.pt[1])
-        #cv2.circle(output_image, (x, y), 8, kp_color, 2)
+        cv2.circle(output_image, (x, y), 8, kp_color, 2)
 
     # Highlight matched keypoints
-    for match_kp in matched_keypoints:
-        x, y = int(match_kp.pt[0]), int(match_kp.pt[1])
-        cv2.circle(output_image, (x, y), 12, match_color, 3)
+    if matched_keypoints is not None:
+        for match_kp in matched_keypoints:
+            x, y = int(match_kp.pt[0]), int(match_kp.pt[1])
+            cv2.circle(output_image, (x, y), 12, match_color, 3)
 
     return output_image
 
 
 # Load the images
-large_image = cv2.imread('satellite_image.jpg', cv2.IMREAD_GRAYSCALE)
-small_image = cv2.imread('small_imag4.jpg', cv2.IMREAD_GRAYSCALE)
+#large_image = cv2.imread('bruchsal_highres.jpg', cv2.IMREAD_GRAYSCALE)
+large_image = cv2.imread('luftbild6.jpg', cv2.IMREAD_GRAYSCALE)
+small_image = cv2.imread('luftbild6.jpg', cv2.IMREAD_GRAYSCALE)
+
+#large_image = cv2.imread('satellite_image.jpg', cv2.IMREAD_GRAYSCALE)
+#small_image = cv2.imread('small_imag3.jpg', cv2.IMREAD_GRAYSCALE)
 
 if large_image is None or small_image is None:
     raise FileNotFoundError("One or both image paths are incorrect.")
@@ -182,35 +187,43 @@ small_image, small_top_offset = crop_to_middle_80_percent(small_image)
 try:
     # Ensure minimum number of spatially consistent matches
     keypoints_small, keypoints_large, filtered_matches = ensure_minimum_matches(
-        small_image, large_image, min_matches=4
+        small_image, large_image, min_matches=4, max_attempts=3
     )
 
-    # Crop the large image to the relevant region
-    cropped_image, x_min, y_min, crop_width, crop_height = crop_to_matches(large_image, keypoints_large,
+    if filtered_matches is not None:
+
+        # Crop the large image to the relevant region
+        cropped_image, x_min, y_min, crop_width, crop_height = crop_to_matches(large_image, keypoints_large,
                                                                            filtered_matches, margin=20)
 
-    # Resize the cropped image
-    output_width, output_height = small_image.shape[1], small_image.shape[0]
-    resized_cropped_image = cv2.resize(cropped_image, (output_width, output_height))
+        # Resize the cropped image
+        output_width, output_height = small_image.shape[1], small_image.shape[0]
+        resized_cropped_image = cv2.resize(cropped_image, (output_width, output_height))
 
-    # Adjust keypoints for the cropped and resized image
-    adjusted_keypoints = adjust_keypoints_for_crop_and_resize(
-        keypoints_large, x_min, y_min, crop_width, crop_height, output_width, output_height
-    )
+        # Adjust keypoints for the cropped and resized image
+        adjusted_keypoints = adjust_keypoints_for_crop_and_resize(
+            keypoints_large, x_min, y_min, crop_width, crop_height, output_width, output_height
+        )
 
-    # Draw keypoints and matches on the small image
-    matched_keypoints_small = [keypoints_small[m.queryIdx] for m in filtered_matches]
-    small_image_with_matches = draw_keypoints_and_matches(
-        small_image, keypoints_small, filtered_matches, matched_keypoints_small, kp_color=(0, 255, 0),
-        match_color=(255, 0, 0)
-    )
+        # Draw keypoints and matches on the small image
+        matched_keypoints_small = [keypoints_small[m.queryIdx] for m in filtered_matches]
+        small_image_with_matches = draw_keypoints_and_matches(
+            small_image, keypoints_small, matched_keypoints_small, kp_color=(0, 255, 0),
+            match_color=(255, 0, 0)
+        )
 
-    # Draw keypoints and matches on the resized cropped large image
-    matched_keypoints_large = [adjusted_keypoints[m.trainIdx] for m in filtered_matches]
-    resized_cropped_with_matches = draw_keypoints_and_matches(
-        resized_cropped_image, adjusted_keypoints, filtered_matches, matched_keypoints_large, kp_color=(0, 255, 0),
-        match_color=(255, 0, 0)
-    )
+        # Draw keypoints and matches on the resized cropped large image
+        matched_keypoints_large = [adjusted_keypoints[m.trainIdx] for m in filtered_matches]
+        resized_cropped_with_matches = draw_keypoints_and_matches(
+            resized_cropped_image, adjusted_keypoints, matched_keypoints_large, kp_color=(0, 255, 0),
+            match_color=(255, 0, 0)
+        )
+
+    else:
+        small_image_with_matches = draw_keypoints_and_matches(
+            small_image, keypoints_small, None, kp_color=(0, 255, 0),
+            match_color=(255, 0, 0)
+        )
 
     # Display results
     plt.figure(figsize=(15, 10))
@@ -219,10 +232,11 @@ try:
     plt.imshow(cv2.cvtColor(small_image_with_matches, cv2.COLOR_BGR2RGB))
     plt.axis("off")
 
-    plt.subplot(1, 2, 2)
-    plt.title("Cropped and Resized Large Image with Matches")
-    plt.imshow(cv2.cvtColor(resized_cropped_with_matches, cv2.COLOR_BGR2RGB))
-    plt.axis("off")
+    if filtered_matches is not None:
+        plt.subplot(1, 2, 2)
+        plt.title("Cropped and Resized Large Image with Matches")
+        plt.imshow(cv2.cvtColor(resized_cropped_with_matches, cv2.COLOR_BGR2RGB))
+        plt.axis("off")
 
     plt.show()
 
