@@ -120,7 +120,7 @@ def ensure_minimum_matches(small_image, large_image, min_matches=10, max_attempt
 
     while attempts < max_attempts:
         keypoints_small, descriptors_small = extract_relevant_keypoints(
-            small_image, max_keypoints=100, hessian_threshold=hessian_threshold
+            small_image, max_keypoints=1000, hessian_threshold=hessian_threshold
         )
         surf = cv2.xfeatures2d.SURF_create(hessianThreshold=hessian_threshold)
         keypoints_large, descriptors_large = surf.detectAndCompute(large_image, None)
@@ -129,7 +129,7 @@ def ensure_minimum_matches(small_image, large_image, min_matches=10, max_attempt
 
         # Apply spatial filtering to matches
         try:
-            filtered_matches = spatial_filter_matches(good_matches, keypoints_large, eps=50, min_samples=3)
+            filtered_matches = spatial_filter_matches(good_matches, keypoints_large, eps=100, min_samples=3)
         except ValueError as e:
             filtered_matches = []
 
@@ -140,7 +140,7 @@ def ensure_minimum_matches(small_image, large_image, min_matches=10, max_attempt
             return keypoints_small, keypoints_large, filtered_matches
 
         # Adjust parameters
-        hessian_threshold = max(500, hessian_threshold - 200)  # Lower Hessian threshold
+        hessian_threshold = max(100, hessian_threshold - 100)  # Lower Hessian threshold
         ratio_test = min(0.9, ratio_test + 0.05)  # Relax Lowe's ratio test
         attempts += 1
 
@@ -158,7 +158,7 @@ def draw_keypoints_and_matches(image, keypoints, matches, matched_keypoints, kp_
     # Draw all keypoints
     for kp in keypoints:
         x, y = int(kp.pt[0]), int(kp.pt[1])
-        cv2.circle(output_image, (x, y), 8, kp_color, 2)
+        #cv2.circle(output_image, (x, y), 8, kp_color, 2)
 
     # Highlight matched keypoints
     for match_kp in matched_keypoints:
@@ -170,7 +170,7 @@ def draw_keypoints_and_matches(image, keypoints, matches, matched_keypoints, kp_
 
 # Load the images
 large_image = cv2.imread('satellite_image.jpg', cv2.IMREAD_GRAYSCALE)
-small_image = cv2.imread('small_image.jpg', cv2.IMREAD_GRAYSCALE)
+small_image = cv2.imread('small_imag4.jpg', cv2.IMREAD_GRAYSCALE)
 
 if large_image is None or small_image is None:
     raise FileNotFoundError("One or both image paths are incorrect.")
@@ -182,7 +182,7 @@ small_image, small_top_offset = crop_to_middle_80_percent(small_image)
 try:
     # Ensure minimum number of spatially consistent matches
     keypoints_small, keypoints_large, filtered_matches = ensure_minimum_matches(
-        small_image, large_image, min_matches=5
+        small_image, large_image, min_matches=4
     )
 
     # Crop the large image to the relevant region
