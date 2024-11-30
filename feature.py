@@ -1,109 +1,134 @@
-# Import necessary libraries
+# Importieren der erforderlichen Bibliotheken
+import torch
+from transformers import SegformerFeatureExtractor, SegformerForSemanticSegmentation
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
-from mmseg.apis import inference_segmentor, init_segmentor
-import torch
 from scipy.spatial.distance import cdist
+import warnings
+import os
 
-# Load images
-# Replace 'satellite_image.jpg' and 'drone_image.jpg' with your image file paths
-satellite_image_path = 'satellite_image.jpg'
-drone_image_path = 'small_image.jpg'
+# Warnungen unterdrücken
+warnings.filterwarnings('ignore')
+
+# Gerät auswählen (CPU oder GPU)
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+print(f'Verwende Gerät: {device}')
+
+# Laden der Bilder
+satellite_image_path = 'satellite_image.jpg'  # Pfad zum Satellitenbild
+drone_image_path = 'small_image.jpg'          # Pfad zum Drohnenbild
 
 satellite_image = cv2.imread(satellite_image_path)
 drone_image = cv2.imread(drone_image_path)
 
-# Check if images are loaded correctly
+# Überprüfen, ob die Bilder korrekt geladen wurden
 if satellite_image is None or drone_image is None:
-    raise FileNotFoundError("One or both image paths are incorrect.")
+    raise FileNotFoundError("Eines oder beide Bilder konnten nicht geladen werden.")
 
-# Convert images from BGR to RGB
+# Konvertieren von BGR zu RGB
 satellite_image_rgb = cv2.cvtColor(satellite_image, cv2.COLOR_BGR2RGB)
 drone_image_rgb = cv2.cvtColor(drone_image, cv2.COLOR_BGR2RGB)
 
-# Initialize the model
-# Specify the configuration and checkpoint files
-config_file = 'https://raw.githubusercontent.com/open-mmlab/mmsegmentation/master/configs/segformer/segformer_mit-b0_512x512_160k_ade20k.py'
-checkpoint_file = 'https://download.openmmlab.com/mmsegmentation/v0.5/segformer/segformer_mit-b0_512x512_160k_ade20k/segformer_mit-b0_512x512_160k_ade20k_20210630_110128-2a2dd774.pth'
+# Verwenden der Originalbildgröße
+# Wenn die Bilder zu groß sind, können Sie sie auf eine höhere Größe wie (1024, 1024) skalieren
+# Achten Sie darauf, dass genügend Speicher verfügbar ist
 
-# Initialize the model
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-model = init_segmentor(config_file, checkpoint_file, device=device)
+# Initialisieren des Feature Extractors und des Modells
+feature_extractor = SegformerFeatureExtractor.from_pretrained('nvidia/segformer-b5-finetuned-ade-640-640')
+model = SegformerForSemanticSegmentation.from_pretrained('nvidia/segformer-b5-finetuned-ade-640-640')
 
-# Run inference
-result_satellite = inference_segmentor(model, satellite_image_rgb)
-result_drone = inference_segmentor(model, drone_image_rgb)
+# Modell auf das Gerät verschieben
+model.to(device)
+model.eval()
 
-# Get class names from the model
-class_names = model.CLASSES
+# Vorverarbeitung der Bilder
+inputs_satellite = feature_extractor(images=satellite_image_rgb, return_tensors="pt").to(device)
+inputs_drone = feature_extractor(images=drone_image_rgb, return_tensors="pt").to(device)
 
-# Find class indices for 'building' and 'road'
+# Inferenz durchführen
+with torch.no_grad():
+    outputs_satellite = model(**inputs_satellite)
+    outputs_drone = model(**inputs_drone)
+
+# Abrufen der Logits
+logits_satellite = outputs_satellite.logits  # Form [1, num_classes, H, W]
+logits_drone = outputs_drone.logits          # Form [1, num_classes, H, W]
+
+# Wahrscheinlichkeiten berechnen
+probs_satellite = torch.nn.functional.softmax(logits_satellite, dim=1)[0].cpu().numpy()
+probs_drone = torch.nn.functional.softmax(logits_drone, dim=1)[0].cpu().numpy()
+
+# Klassenlabels abrufen
+id2label = model.config.id2label
+
+# Finden der Klassenindizes für 'building' und 'road'
 building_class_name = 'building'
 road_class_name = 'road'
 
-# Ensure class names are in the class_names list
-if building_class_name in class_names:
-    building_class_index = class_names.index(building_class_name)
-else:
-    raise ValueError(f"Class '{building_class_name}' not found in model classes.")
+building_class_index = None
+road_class_index = None
 
-if road_class_name in class_names:
-    road_class_index = class_names.index(road_class_name)
-else:
-    raise ValueError(f"Class '{road_class_name}' not found in model classes.")
+for idx, label in id2label.items():
+    if label.lower() == building_class_name:
+        building_class_index = idx
+    if label.lower() == road_class_name:
+        road_class_index = idx
 
-print(f"'Building' class index: {building_class_index}")
-print(f"'Road' class index: {road_class_index}")
+if building_class_index is None or road_class_index is None:
+    raise ValueError("Klassenindizes für 'building' und/oder 'road' nicht gefunden.")
 
-# Classes of interest
-classes_of_interest = [building_class_index, road_class_index]
+print(f"'Building' Klassenindex: {building_class_index}")
+print(f"'Road' Klassenindex: {road_class_index}")
 
-# For satellite image
-satellite_prediction = result_satellite[0]  # The segmentation map
-satellite_mask = np.isin(satellite_prediction, classes_of_interest).astype(np.uint8)
+# Schwellenwert setzen, um binäre Masken zu erstellen
+threshold = 0.5  # Kann angepasst werden
 
-# For drone image
-drone_prediction = result_drone[0]
-drone_mask = np.isin(drone_prediction, classes_of_interest).astype(np.uint8)
+satellite_mask = ((probs_satellite[building_class_index] > threshold) |
+                  (probs_satellite[road_class_index] > threshold)).astype(np.uint8)
+drone_mask = ((probs_drone[building_class_index] > threshold) |
+              (probs_drone[road_class_index] > threshold)).astype(np.uint8)
 
-# Apply morphological operations to clean up the masks
-kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-satellite_mask = cv2.morphologyEx(satellite_mask, cv2.MORPH_CLOSE, kernel)
-drone_mask = cv2.morphologyEx(drone_mask, cv2.MORPH_CLOSE, kernel)
+# Optional: CRF-Nachbearbeitung anwenden, um die Masken zu verfeinern
+# Installieren Sie pydensecrf mit: pip install pydensecrf
 
-# Find contours in satellite mask
+# CRF-Code hier einfügen, wenn gewünscht
+
+# Morphologische Operationen anpassen, um feinere Details zu erhalten
+kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))  # Kleinere Kernelgröße
+satellite_mask_cleaned = cv2.morphologyEx(satellite_mask, cv2.MORPH_OPEN, kernel)
+drone_mask_cleaned = cv2.morphologyEx(drone_mask, cv2.MORPH_OPEN, kernel)
+
+# Konturen in den Masken finden
 contours_satellite, _ = cv2.findContours(
-    satellite_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    satellite_mask_cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
 )
-
-# Find contours in drone mask
 contours_drone, _ = cv2.findContours(
-    drone_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    drone_mask_cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
 )
 
-# Draw contours on the images
+# Konturen auf die Bilder zeichnen
 satellite_image_contours = satellite_image_rgb.copy()
 drone_image_contours = drone_image_rgb.copy()
 
 cv2.drawContours(satellite_image_contours, contours_satellite, -1, (255, 0, 0), 2)
 cv2.drawContours(drone_image_contours, contours_drone, -1, (255, 0, 0), 2)
 
-# Display the images with contours
+# Bilder mit Konturen anzeigen
 plt.figure(figsize=(20, 10))
 plt.subplot(1, 2, 1)
 plt.imshow(satellite_image_contours)
-plt.title('Satellite Image with Contours')
+plt.title('Satellitenbild mit Konturen')
 plt.axis('off')
 
 plt.subplot(1, 2, 2)
 plt.imshow(drone_image_contours)
-plt.title('Drone Image with Contours')
+plt.title('Drohnenbild mit Konturen')
 plt.axis('off')
 
 plt.show()
 
-# Function to compute centroids of contours
+# Funktion zum Berechnen der Konturzentroide
 def compute_centroids(contours):
     centroids = []
     for cnt in contours:
@@ -114,46 +139,46 @@ def compute_centroids(contours):
             centroids.append((cX, cY))
     return centroids
 
-# Compute centroids
+# Zentren berechnen
 centroids_satellite = compute_centroids(contours_satellite)
 centroids_drone = compute_centroids(contours_drone)
 
-# Convert centroids to NumPy arrays
+# Zentren in NumPy-Arrays umwandeln
 centroids_satellite_np = np.array(centroids_satellite)
 centroids_drone_np = np.array(centroids_drone)
 
-# Check if centroids are available
+# Überprüfen, ob Zentren vorhanden sind
 if len(centroids_satellite_np) == 0 or len(centroids_drone_np) == 0:
-    print("No centroids found in one or both images.")
+    print("Keine Zentren in einem oder beiden Bildern gefunden.")
 else:
-    # Compute distance matrix between centroids
+    # Distanzmatrix zwischen den Zentren berechnen
     distance_matrix = cdist(centroids_drone_np, centroids_satellite_np)
 
-    # Match centroids based on minimum distance
+    # Zentren basierend auf minimaler Distanz zuordnen
     matches = []
     for i in range(len(centroids_drone_np)):
         min_idx = np.argmin(distance_matrix[i])
         min_distance = distance_matrix[i][min_idx]
         matches.append((i, min_idx, min_distance))
 
-    # Set a distance threshold for matching (adjust as needed)
-    distance_threshold = 100  # Pixels
+    # Distanzschwellenwert für die Zuordnung setzen
+    distance_threshold = 200  # An Bildgröße anpassen
     good_matches = [m for m in matches if m[2] < distance_threshold]
 
-    # Create a combined image for visualization
+    # Kombiniertes Bild zur Visualisierung erstellen
     combined_image = np.hstack((drone_image_rgb, satellite_image_rgb))
-    offset = drone_image_rgb.shape[1]  # Offset for the satellite image in the combined image
+    offset = drone_image_rgb.shape[1]  # Offset für das Satellitenbild im kombinierten Bild
 
-    # Draw lines between matched centroids
+    # Linien zwischen zugeordneten Zentren zeichnen
     for match in good_matches:
         idx_drone = match[0]
         idx_satellite = match[1]
 
         cX_drone, cY_drone = centroids_drone_np[idx_drone]
         cX_satellite, cY_satellite = centroids_satellite_np[idx_satellite]
-        cX_satellite += offset  # Adjust x-coordinate for combined image
+        cX_satellite += offset  # x-Koordinate für kombiniertes Bild anpassen
 
-        # Draw a line between the matched centroids
+        # Linie zwischen den zugeordneten Zentren zeichnen
         cv2.line(
             combined_image,
             (cX_drone, cY_drone),
@@ -162,16 +187,16 @@ else:
             2
         )
 
-    # Display the matched centroids
+    # Zuordnung anzeigen
     plt.figure(figsize=(20, 10))
     plt.imshow(combined_image)
-    plt.title('Matched Structures Between Drone and Satellite Images')
+    plt.title('Zugeordnete Strukturen zwischen Drohnen- und Satellitenbild')
     plt.axis('off')
     plt.show()
 
-    # Save the combined image with matches (Optional)
+    # Optional: Kombiniertes Bild speichern
     cv2.imwrite('matched_structures.jpg', cv2.cvtColor(combined_image, cv2.COLOR_RGB2BGR))
 
-# Save the images with contours (Optional)
+# Optional: Bilder mit Konturen speichern
 cv2.imwrite('satellite_with_contours.jpg', cv2.cvtColor(satellite_image_contours, cv2.COLOR_RGB2BGR))
 cv2.imwrite('drone_with_contours.jpg', cv2.cvtColor(drone_image_contours, cv2.COLOR_RGB2BGR))
