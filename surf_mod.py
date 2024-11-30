@@ -113,9 +113,9 @@ def draw_keypoints_and_matches(image, keypoints, matches, matched_keypoints, kp_
     output_image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
 
     # Draw all keypoints
-    for kp in keypoints:
-        x, y = int(kp.pt[0]), int(kp.pt[1])
-        cv2.circle(output_image, (x, y), 8, kp_color, 2)
+    #for kp in keypoints:
+    #    x, y = int(kp.pt[0]), int(kp.pt[1])
+    #    cv2.circle(output_image, (x, y), 8, kp_color, 2)
 
     # Highlight matched keypoints
     for match_kp in matched_keypoints:
@@ -125,7 +125,7 @@ def draw_keypoints_and_matches(image, keypoints, matches, matched_keypoints, kp_
     return output_image
 
 
-def ensure_minimum_matches(small_image, large_image, min_matches=10, max_attempts=10):
+def ensure_minimum_matches(small_image, large_image, min_matches=8, max_attempts=10):
     """
     Dynamically adjust parameters to ensure a minimum number of matches.
     """
@@ -152,7 +152,7 @@ def ensure_minimum_matches(small_image, large_image, min_matches=10, max_attempt
             return keypoints_small, keypoints_large, inlier_matches
 
         # Adjust parameters
-        hessian_threshold = max(500, hessian_threshold - 200)  # Lower Hessian threshold
+        hessian_threshold = max(100, hessian_threshold - 100)  # Lower Hessian threshold
         ratio_test = min(0.9, ratio_test + 0.05)  # Relax Lowe's ratio test
         attempts += 1
 
@@ -161,7 +161,7 @@ def ensure_minimum_matches(small_image, large_image, min_matches=10, max_attempt
 
 # Load the images
 large_image = cv2.imread('satellite_image.jpg', cv2.IMREAD_GRAYSCALE)
-small_image = cv2.imread('small_image.jpg', cv2.IMREAD_GRAYSCALE)
+small_image = cv2.imread('small_imag7.jpg', cv2.IMREAD_GRAYSCALE)
 
 if large_image is None or small_image is None:
     raise FileNotFoundError("One or both image paths are incorrect.")
@@ -173,7 +173,7 @@ small_image, small_top_offset = crop_to_middle_80_percent(small_image)
 try:
     # Ensure minimum number of matches
     keypoints_small, keypoints_large, inlier_matches = ensure_minimum_matches(
-        small_image, large_image, min_matches=10
+        small_image, large_image, min_matches=4
     )
 
     # Draw keypoints and matches on the small image
