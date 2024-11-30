@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+from eta.core.image import aspect_ratio
 from onnx.gen_proto import ELSE_ONNX_ML_REGEX
 from sklearn.cluster import DBSCAN
 
@@ -38,10 +39,9 @@ def match_keypoints(descriptors_small, descriptors_large, ratio=0.7):
     """
     Match descriptors between small and large images.
     """
-    index_params = dict(algorithm=1, trees=5)
+    index_params = dict(algorithm=1, trees=10)
     search_params = dict(checks=50)
     flann = cv2.FlannBasedMatcher(index_params, search_params)
-
     matches = flann.knnMatch(descriptors_small, descriptors_large, k=2)
 
     # Apply Lowe's ratio test
@@ -115,13 +115,13 @@ def ensure_minimum_matches(small_image, large_image, min_matches=10, max_attempt
     """
     Dynamically adjust parameters to ensure a minimum number of matches.
     """
-    hessian_threshold = 5000
+    hessian_threshold = 1000
     ratio_test = 0.7
     attempts = 0
 
     while attempts < max_attempts:
         keypoints_small, descriptors_small = extract_relevant_keypoints(
-            small_image, max_keypoints=1000, hessian_threshold=hessian_threshold
+            small_image, max_keypoints=1000000, hessian_threshold=hessian_threshold
         )
         surf = cv2.xfeatures2d.SURF_create(hessianThreshold=hessian_threshold)
         keypoints_large, descriptors_large = surf.detectAndCompute(large_image, None)
@@ -130,7 +130,7 @@ def ensure_minimum_matches(small_image, large_image, min_matches=10, max_attempt
 
         # Apply spatial filtering to matches
         try:
-            filtered_matches = spatial_filter_matches(good_matches, keypoints_large, eps=100, min_samples=3)
+            filtered_matches = spatial_filter_matches(good_matches, keypoints_large, eps=500, min_samples=3)
         except ValueError as e:
             filtered_matches = []
 
@@ -141,7 +141,7 @@ def ensure_minimum_matches(small_image, large_image, min_matches=10, max_attempt
             return keypoints_small, keypoints_large, filtered_matches
 
         # Adjust parameters
-        hessian_threshold = max(500, hessian_threshold - 100)  # Lower Hessian threshold
+        hessian_threshold = max(100, hessian_threshold - 100)  # Lower Hessian threshold
         ratio_test = min(0.9, ratio_test + 0.05)  # Relax Lowe's ratio test
         attempts += 1
 
@@ -170,12 +170,17 @@ def draw_keypoints_and_matches(image, keypoints, matched_keypoints, kp_color=(0,
 
 
 # Load the images
-#large_image = cv2.imread('bruchsal_highres.jpg', cv2.IMREAD_GRAYSCALE)
-large_image = cv2.imread('luftbild6.jpg', cv2.IMREAD_GRAYSCALE)
-small_image = cv2.imread('luftbild6.jpg', cv2.IMREAD_GRAYSCALE)
+
+#large_image = cv2.imread('satellite_image.jpg', cv2.IMREAD_GRAYSCALE)
+#small_image = cv2.imread('satellite_image.jpg', cv2.IMREAD_GRAYSCALE)
+#large_image = cv2.imread('luftbild5.jpg', cv2.IMREAD_GRAYSCALE)
+#small_image = cv2.imread('luftbild6.jpg', cv2.IMREAD_GRAYSCALE)
 
 #large_image = cv2.imread('satellite_image.jpg', cv2.IMREAD_GRAYSCALE)
 #small_image = cv2.imread('small_imag3.jpg', cv2.IMREAD_GRAYSCALE)
+
+large_image = cv2.imread('normal-200.JPG', cv2.IMREAD_GRAYSCALE)
+small_image = cv2.imread('normal-120.JPG', cv2.IMREAD_GRAYSCALE)
 
 if large_image is None or small_image is None:
     raise FileNotFoundError("One or both image paths are incorrect.")
@@ -187,17 +192,19 @@ small_image, small_top_offset = crop_to_middle_80_percent(small_image)
 try:
     # Ensure minimum number of spatially consistent matches
     keypoints_small, keypoints_large, filtered_matches = ensure_minimum_matches(
-        small_image, large_image, min_matches=4, max_attempts=3
+        small_image, large_image, min_matches=4, max_attempts=10
     )
 
     if filtered_matches is not None:
 
         # Crop the large image to the relevant region
         cropped_image, x_min, y_min, crop_width, crop_height = crop_to_matches(large_image, keypoints_large,
-                                                                           filtered_matches, margin=20)
+                                                                           filtered_matches, margin=0)
 
         # Resize the cropped image
-        output_width, output_height = small_image.shape[1], small_image.shape[0]
+        aspect_ratio = crop_width/crop_height
+        output_height = small_image.shape[1]
+        output_width = int(output_height * aspect_ratio)
         resized_cropped_image = cv2.resize(cropped_image, (output_width, output_height))
 
         # Adjust keypoints for the cropped and resized image
