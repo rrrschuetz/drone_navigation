@@ -14,7 +14,7 @@ def center_crop(image, crop_width, crop_height):
 
 # Load the large (satellite) and small images
 large_image_path = 'satellite_image.jpg'  # Replace with path to the large satellite image
-small_image_path = 'small_image.jpg'      # Replace with path to the smaller image
+small_image_path = 'small_imag3.jpg'      # Replace with path to the smaller image
 
 large_image = cv2.imread(large_image_path, cv2.IMREAD_GRAYSCALE)
 small_image = cv2.imread(small_image_path, cv2.IMREAD_GRAYSCALE)
