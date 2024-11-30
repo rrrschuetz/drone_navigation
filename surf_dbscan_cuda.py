@@ -16,60 +16,45 @@ def crop_to_middle_80_percent(image):
 
 def extract_relevant_keypoints(image_gpu, hessian_threshold=1000):
     """
-    Extract keypoints and descriptors from the image using CUDA SURF or ORB.
+    Extract keypoints and descriptors from the image using CUDA SURF.
     """
-    try:
-        # Try to create a CUDA SURF detector
-        surf = cv2.cuda.SURF_CUDA_create(hessian_threshold)
-        # Flag indicating the use of SURF
-        is_surf = True
-    except AttributeError:
-        print("CUDA SURF not available. Switching to CUDA ORB.")
-        # Use CUDA ORB detector as a fallback
-        surf = cv2.cuda_ORB.create()
-        is_surf = False
+    # Create the CUDA SURF detector
+    surf = cv2.cuda.SURF_CUDA_create(400) #,_hessianThreshold=hessian_threshold)
 
-    # Detect keypoints and compute descriptors
-    keypoints_gpu, descriptors_gpu = surf.detectWithDescriptors(image_gpu, None)
+    # Detect keypoints (synchronous)
+    keypoints_gpu = surf.detect(image_gpu, mask=None)
+
+    # Compute descriptors (synchronous)
+    descriptors_gpu = surf.compute(image_gpu, keypoints_gpu)
 
     # Download keypoints from GPU to CPU
-    if is_surf:
-        keypoints = surf.downloadKeypoints(keypoints_gpu)
-    else:
-        keypoints = surf.convert(keypoints_gpu)
+    keypoints = surf.downloadKeypoints(keypoints_gpu)
 
-    return keypoints, descriptors_gpu, is_surf
+    return keypoints, descriptors_gpu
 
 
-def match_keypoints(descriptors_small_gpu, descriptors_large_gpu, is_surf, ratio=0.7):
+
+def match_keypoints(descriptors_small_gpu, descriptors_large_gpu, ratio=0.7):
     """
-    Match descriptors between small and large images using CPU-based matcher.
+    Match descriptors between small and large images using CUDA BFMatcher.
     """
-    # Download descriptors from GPU to CPU
-    descriptors_small = descriptors_small_gpu.download()
-    descriptors_large = descriptors_large_gpu.download()
+    # Create CUDA BFMatcher
+    matcher = cv2.cuda.DescriptorMatcher_createBFMatcher(cv2.NORM_L2)
 
-    # Determine norm type based on descriptor type
-    if is_surf:
-        # SURF descriptors are float32
-        norm_type = cv2.NORM_L2
-        index_params = dict(algorithm=1, trees=5)
-    else:
-        # ORB descriptors are uint8
-        norm_type = cv2.NORM_HAMMING
-        index_params = dict(algorithm=6, table_number=6, key_size=12, multi_probe_level=1)  # FLANN parameters for ORB
+    # Create a CUDA stream
+    stream = cv2.cuda_Stream()
 
-    # Use FLANN-based matcher
-    search_params = dict(checks=50)
-    matcher = cv2.FlannBasedMatcher(index_params, search_params)
+    # Perform k-NN matching with k=2
+    matches_gpu = matcher.knnMatchAsync(descriptors_small_gpu, descriptors_large_gpu, k=2, stream=stream)
 
-    matches = matcher.knnMatch(descriptors_small, descriptors_large, k=2)
+    # Wait for the matching to complete
+    stream.waitForCompletion()
+
+    # Convert matches from GPU to CPU
+    matches = matcher.knnMatchConvert(matches_gpu)
 
     # Apply Lowe's ratio test
-    good_matches = []
-    for m, n in matches:
-        if m.distance < ratio * n.distance:
-            good_matches.append(m)
+    good_matches = [m[0] for m in matches if len(m) == 2 and m[0].distance < ratio * m[1].distance]
     return good_matches
 
 
@@ -140,24 +125,24 @@ def ensure_minimum_matches(small_image_gpu, large_image_gpu, min_matches=10, max
     Dynamically adjust parameters to ensure a minimum number of matches.
     """
     hessian_threshold = 1000
-    ratio_test = 0.6
+    ratio_test = 0.7
     attempts = 0
 
     while attempts < max_attempts:
-        # Extract keypoints and descriptors
-        keypoints_small, descriptors_small_gpu, is_surf = extract_relevant_keypoints(
+        # Extract keypoints and descriptors using CUDA SURF
+        keypoints_small, descriptors_small_gpu = extract_relevant_keypoints(
             small_image_gpu, hessian_threshold=hessian_threshold
         )
-        keypoints_large, descriptors_large_gpu, _ = extract_relevant_keypoints(
+        keypoints_large, descriptors_large_gpu = extract_relevant_keypoints(
             large_image_gpu, hessian_threshold=hessian_threshold
         )
 
-        # Match keypoints
-        good_matches = match_keypoints(descriptors_small_gpu, descriptors_large_gpu, is_surf, ratio=ratio_test)
+        # Match keypoints using CUDA BFMatcher
+        good_matches = match_keypoints(descriptors_small_gpu, descriptors_large_gpu, ratio=ratio_test)
 
         # Apply spatial filtering to matches
         try:
-            filtered_matches = spatial_filter_matches(good_matches, keypoints_large, eps=100, min_samples=20)
+            filtered_matches = spatial_filter_matches(good_matches, keypoints_large, eps=100, min_samples=30)
         except ValueError:
             filtered_matches = []
 
@@ -197,18 +182,11 @@ def draw_keypoints_and_matches(image, keypoints, matched_keypoints, kp_color=(0,
 
 
 # Load the images
-#large_image = cv2.imread('satellite_image.jpg', cv2.IMREAD_GRAYSCALE)
-#small_image = cv2.imread('small_imag3.jpg', cv2.IMREAD_GRAYSCALE)
-
-large_image = cv2.imread('karlsdorf_highres4.jpg', cv2.IMREAD_GRAYSCALE)
-#small_image = cv2.imread('karlsdorf_highres2.jpg', cv2.IMREAD_GRAYSCALE)
+large_image = cv2.imread('karlsdorf_highres2.jpg', cv2.IMREAD_GRAYSCALE)
 small_image = cv2.imread('normal-120.JPG', cv2.IMREAD_GRAYSCALE)
 
 if large_image is None or small_image is None:
     raise FileNotFoundError("One or both image paths are incorrect.")
-
-large_image = cv2.equalizeHist(large_image)
-small_image = cv2.equalizeHist(small_image)
 
 # Remove upper 10% and lower 10% from the images
 large_image, large_top_offset = crop_to_middle_80_percent(large_image)
@@ -224,7 +202,7 @@ small_image_gpu.upload(small_image)
 try:
     # Ensure minimum number of spatially consistent matches
     keypoints_small, keypoints_large, filtered_matches = ensure_minimum_matches(
-        small_image_gpu, large_image_gpu, min_matches=20, max_attempts=10
+        small_image_gpu, large_image_gpu, min_matches=50, max_attempts=10
     )
 
     if filtered_matches is not None:
