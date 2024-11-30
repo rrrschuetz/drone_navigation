@@ -10,7 +10,7 @@ def crop_to_middle_80_percent(image):
     height, width = image.shape
     top = int(height * 0.1)
     bottom = int(height * 0.9)
-    return image[top:bottom, :]
+    return image[top:bottom, :], top
 
 
 def extract_relevant_keypoints(image, max_keypoints=50, hessian_threshold=1000):
@@ -66,6 +66,22 @@ def filter_matches_with_ransac(keypoints_small, keypoints_large, matches):
     return inlier_matches
 
 
+def adjust_keypoints_for_crop_and_resize(keypoints, x_min, y_min, crop_width, crop_height, output_width, output_height):
+    """
+    Adjust keypoint coordinates for cropping and resizing.
+    """
+    x_scale = output_width / crop_width
+    y_scale = output_height / crop_height
+
+    adjusted_keypoints = []
+    for kp in keypoints:
+        x, y = kp.pt
+        adjusted_x = (x - x_min) * x_scale
+        adjusted_y = (y - y_min) * y_scale
+        adjusted_keypoints.append(cv2.KeyPoint(adjusted_x, adjusted_y, kp.size))
+    return adjusted_keypoints
+
+
 def crop_to_matches(image, keypoints, matches, margin=20):
     """
     Crop the larger image to the region containing all matched keypoints.
@@ -85,28 +101,31 @@ def crop_to_matches(image, keypoints, matches, margin=20):
     if x_min >= x_max or y_min >= y_max:
         raise ValueError("Invalid crop region. Check matched keypoints.")
 
-    return image[y_min:y_max, x_min:x_max]
+    cropped_image = image[y_min:y_max, x_min:x_max]
+    return cropped_image, x_min, y_min, (x_max - x_min), (y_max - y_min)
 
 
-def draw_keypoints_and_matches(image, keypoints, matches, match_keypoints, match_color=(255, 0, 0), kp_color=(0, 255, 0)):
+def draw_keypoints_and_matches(image, keypoints, matches, matched_keypoints, kp_color=(0, 255, 0),
+                               match_color=(255, 0, 0)):
     """
     Draw all keypoints and matched keypoints on the image.
     """
     output_image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+
     # Draw all keypoints
     for kp in keypoints:
         x, y = int(kp.pt[0]), int(kp.pt[1])
-        #cv2.circle(output_image, (x, y), 8, kp_color, 2)
+        cv2.circle(output_image, (x, y), 8, kp_color, 2)
 
     # Highlight matched keypoints
-    for match_kp in match_keypoints:
+    for match_kp in matched_keypoints:
         x, y = int(match_kp.pt[0]), int(match_kp.pt[1])
         cv2.circle(output_image, (x, y), 12, match_color, 3)
 
     return output_image
 
 
-def ensure_minimum_matches(small_image, large_image, min_matches=10, max_attempts=20):
+def ensure_minimum_matches(small_image, large_image, min_matches=10, max_attempts=10):
     """
     Dynamically adjust parameters to ensure a minimum number of matches.
     """
@@ -126,13 +145,14 @@ def ensure_minimum_matches(small_image, large_image, min_matches=10, max_attempt
         # Filter matches using RANSAC
         inlier_matches = filter_matches_with_ransac(keypoints_small, keypoints_large, good_matches)
 
-        print(f"Attempt {attempts + 1}: Found {len(inlier_matches)} inlier matches with Hessian={hessian_threshold}, Ratio={ratio_test}")
+        print(
+            f"Attempt {attempts + 1}: Found {len(inlier_matches)} inlier matches with Hessian={hessian_threshold}, Ratio={ratio_test}")
 
         if len(inlier_matches) >= min_matches:
             return keypoints_small, keypoints_large, inlier_matches
 
         # Adjust parameters
-        hessian_threshold = max(100, hessian_threshold - 100)  # Lower Hessian threshold
+        hessian_threshold = max(500, hessian_threshold - 200)  # Lower Hessian threshold
         ratio_test = min(0.9, ratio_test + 0.05)  # Relax Lowe's ratio test
         attempts += 1
 
@@ -147,8 +167,8 @@ if large_image is None or small_image is None:
     raise FileNotFoundError("One or both image paths are incorrect.")
 
 # Remove upper 10% and lower 10% from the images
-large_image = crop_to_middle_80_percent(large_image)
-small_image = crop_to_middle_80_percent(small_image)
+large_image, large_top_offset = crop_to_middle_80_percent(large_image)
+small_image, small_top_offset = crop_to_middle_80_percent(small_image)
 
 try:
     # Ensure minimum number of matches
@@ -156,33 +176,39 @@ try:
         small_image, large_image, min_matches=10
     )
 
-    # Extract matched keypoints
-    matched_keypoints_small = [keypoints_small[m.queryIdx] for m in inlier_matches]
-    matched_keypoints_large = [keypoints_large[m.trainIdx] for m in inlier_matches]
-
     # Draw keypoints and matches on the small image
+    matched_keypoints_small = [keypoints_small[m.queryIdx] for m in inlier_matches]
     small_image_with_matches = draw_keypoints_and_matches(
-        small_image, keypoints_small, inlier_matches, matched_keypoints_small
+        small_image, keypoints_small, inlier_matches, matched_keypoints_small, kp_color=(0, 255, 0),
+        match_color=(255, 0, 0)
     )
 
     # Crop the large image to the relevant region and resize
-    cropped_image = crop_to_matches(large_image, keypoints_large, inlier_matches, margin=20)
+    cropped_image, x_min, y_min, crop_width, crop_height = crop_to_matches(large_image, keypoints_large, inlier_matches,
+                                                                           margin=20)
     resized_cropped_image = cv2.resize(cropped_image, (small_image.shape[1], small_image.shape[0]))
 
+    # Adjust keypoints for the cropped and resized image
+    adjusted_keypoints = adjust_keypoints_for_crop_and_resize(
+        keypoints_large, x_min, y_min, crop_width, crop_height, small_image.shape[1], small_image.shape[0]
+    )
+
     # Draw matches on the resized cropped image
+    matched_keypoints_large = [adjusted_keypoints[m.trainIdx] for m in inlier_matches]
     resized_cropped_with_matches = draw_keypoints_and_matches(
-        resized_cropped_image, keypoints_large, inlier_matches, matched_keypoints_large
+        resized_cropped_image, adjusted_keypoints, inlier_matches, matched_keypoints_large, kp_color=(0, 255, 0),
+        match_color=(255, 0, 0)
     )
 
     # Display results
     plt.figure(figsize=(15, 10))
     plt.subplot(1, 2, 1)
-    plt.title("Small Image: Keypoints and Matches")
+    plt.title("Small Image with Matches")
     plt.imshow(cv2.cvtColor(small_image_with_matches, cv2.COLOR_BGR2RGB))
     plt.axis("off")
 
     plt.subplot(1, 2, 2)
-    plt.title("Cropped Large Image: Keypoints and Matches")
+    plt.title("Cropped Large Image with Matches")
     plt.imshow(cv2.cvtColor(resized_cropped_with_matches, cv2.COLOR_BGR2RGB))
     plt.axis("off")
 
